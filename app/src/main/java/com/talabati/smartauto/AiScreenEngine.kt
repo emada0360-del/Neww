@@ -130,7 +130,7 @@ class AiScreenEngine(private val context: Context) {
     private fun detectOfferBar(bitmap: Bitmap): Rect? {
         val w = bitmap.width
         val h = bitmap.height
-        val top = (h * 0.86f).toInt()
+        val top = (h * 0.905f).toInt()
         val rh = (h * 0.99f).toInt() - top
         if (rh < 20 || w < 200) return null
 
@@ -157,7 +157,7 @@ class AiScreenEngine(private val context: Context) {
                     gCols[x]++
                     gRows[y]++
                     gTotal++
-                } else if (r > 200 && g < 120 && b < 110 && r - g > 110) {
+                } else if (r > 200 && g < 100 && b < 90 && r - g > 120) {
                     rCols[x]++
                     rRows[y]++
                     rTotal++
@@ -175,8 +175,8 @@ class AiScreenEngine(private val context: Context) {
         val rl = percentileIndex(rCols, rTotal, 0.02)
         val rr = percentileIndex(rCols, rTotal, 0.98)
 
-        if (gr - gl < w * 0.30f || gl < w * 0.45f) return null
-        if (rr - rl < w * 0.30f || rr > w * 0.58f) return null
+        if (gr - gl < w * 0.30f || gl < w * 0.30f) return null
+        if (rr - rl < w * 0.25f || rr > w * 0.65f || rr > gl + w * 0.05f) return null
         if (gb - gt < 20) return null
 
         return Rect(gl, top + gt, gr, top + gb)
@@ -187,7 +187,7 @@ class AiScreenEngine(private val context: Context) {
         val w = bitmap.width
         val h = bitmap.height
         val top = (h * 0.52f).toInt()
-        val rh = (h * 0.88f).toInt() - top
+        val rh = (h * 0.905f).toInt() - top
         if (rh < 20) return null
 
         val px = ensureBuf(w * rh)
@@ -256,8 +256,8 @@ class AiScreenEngine(private val context: Context) {
     private fun findRestaurantName(bitmap: Bitmap): Rect? {
         val w = bitmap.width
         val h = bitmap.height
-        val top = (h * 0.455f).toInt()
-        val rh = (h * 0.60f).toInt() - top
+        val top = (h * 0.525f).toInt()
+        val rh = (h * 0.78f).toInt() - top
         if (rh < 20) return null
 
         val px = ensureBuf(w * rh)
