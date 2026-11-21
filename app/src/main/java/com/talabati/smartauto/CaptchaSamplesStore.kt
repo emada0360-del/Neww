@@ -77,6 +77,41 @@ object CaptchaSamplesStore {
         }
     }
 
+    /** الرقم المؤكَّد لنفس الصورة إن وُجد */
+    fun findLabel(features: FloatArray): String? {
+        var best: CaptchaSample? = null
+        var bestSim = SAME_THRESHOLD
+        for (s in _items.value) {
+            val sim = dot(s.features, features)
+            if (sim > bestSim) {
+                bestSim = sim
+                best = s
+            }
+        }
+        return best?.label?.takeIf { it.isNotEmpty() }
+    }
+
+    /** المستخدم ضغط رقماً بنفسه: نكتبه جانب الصورة (ننشئ الصورة إن لم تكن محفوظة) */
+    fun learnFromUser(features: FloatArray, digit: Char, thumb: () -> Bitmap?) {
+        if (digit !in '0'..'9') return
+        var found: CaptchaSample? = null
+        var bestSim = SAME_THRESHOLD
+        for (s in _items.value) {
+            val sim = dot(s.features, features)
+            if (sim > bestSim) {
+                bestSim = sim
+                found = s
+            }
+        }
+        if (found != null) {
+            if (found.label.isEmpty()) setLabel(found.id, digit.toString())
+            return
+        }
+        addIfNew(features, thumb)
+        val added = _items.value.firstOrNull { dot(it.features, features) > SAME_THRESHOLD } ?: return
+        setLabel(added.id, digit.toString())
+    }
+
     /** يحفظ الرقم الذي كتبه المستخدم ويعلّم الـAI عليه */
     fun setLabel(id: String, label: String) {
         val digit = label.firstOrNull()?.takeIf { it in '0'..'9' }
@@ -84,6 +119,11 @@ object CaptchaSamplesStore {
             val cur = _items.value.firstOrNull { it.id == id } ?: return
             val newLabel = digit?.toString() ?: ""
             if (cur.label == newLabel) return
+            val ctx0 = appContext
+            val oldDigit = cur.label.firstOrNull()
+            if (oldDigit != null && ctx0 != null) {
+                repeat(LABEL_WEIGHT) { CaptchaTrainerStore.untrainSample(ctx0, oldDigit, cur.features) }
+            }
             _items.value = _items.value.map { if (it.id == id) it.copy(label = newLabel) else it }
             persistLocked()
             val ctx = appContext

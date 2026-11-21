@@ -38,7 +38,7 @@ fun CaptchaSamplesSection() {
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text(
-            text = "تظهر هنا صور أرقام الكابتشا. اكتب بالحقل الرقم الصحيح (0-9) ليتعلّمه التطبيق ويضغطه.",
+            text = "تظهر هنا صور الكابتشا. إذا ضغطت رقماً بنفسك ينكتب جانبها تلقائياً، وتقدر تعدّله بالحقل.",
             style = MaterialTheme.typography.bodySmall,
             color = Color.Gray
         )
@@ -65,7 +65,7 @@ private fun CaptchaRow(item: CaptchaSample) {
             null
         }
     }
-    var text by remember(item.id) { mutableStateOf(item.label) }
+    var text by remember(item.id, item.label) { mutableStateOf(item.label) }
 
     Row(
         modifier = Modifier.fillMaxWidth(),

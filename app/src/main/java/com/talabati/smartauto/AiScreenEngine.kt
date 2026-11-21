@@ -319,17 +319,29 @@ class AiScreenEngine(private val context: Context) {
     // ───────────────────────── شاشة الكابتشا ─────────────────────────
 
     private suspend fun analyzeCaptcha(bitmap: Bitmap, keypad: Keypad, cfg: AutomationConfig): ScanResult {
+        val iso = isolateCaptchaDigit(bitmap)
+        try {
+            return analyzeCaptchaWith(bitmap, keypad, cfg, iso)
+        } finally {
+            iso?.image?.recycle()
+        }
+    }
+
+    private suspend fun analyzeCaptchaWith(
+        bitmap: Bitmap,
+        keypad: Keypad,
+        cfg: AutomationConfig,
+        iso: Isolated?
+    ): ScanResult {
         var digit: String? = null
         var features: FloatArray? = null
 
-        val iso = isolateCaptchaDigit(bitmap)
         if (iso != null) {
             features = CaptchaTrainerStore.featureFromMask(iso.mask, iso.gw, iso.gh)
             digit = readSingleDigit(iso.image)
             if (cfg.autoLearn && features != null) {
                 CaptchaSamplesStore.addIfNew(features) { iso.image }
             }
-            iso.image.recycle()
         }
 
         // احتياط: قراءة مباشرة من منطقة الصورة إذا فشل العزل
@@ -339,7 +351,11 @@ class AiScreenEngine(private val context: Context) {
 
         val ai = CaptchaTrainerStore.predict(context, features)
 
+        // رقم أكّده المستخدم سابقاً لنفس الصورة (أعلى أولوية)
+        val known = if (features != null) CaptchaSamplesStore.findLabel(features) else null
+
         val finalDigit: String? = when {
+            known != null -> known
             // رقم علّمه المستخدم (ثقة عالية) له الأولوية على قراءة الـOCR
             ai != null && ai.second >= 0.92f -> ai.first.toString()
             digit != null -> digit
@@ -351,6 +367,14 @@ class AiScreenEngine(private val context: Context) {
         if (digit != null && features != null && iso != null) {
             if (ai == null || ai.first.toString() == digit || ai.second < 0.50f) {
                 CaptchaTrainerStore.trainSample(context, digit[0], features)
+            }
+        }
+
+        // تعلّم تلقائي: إذا ضغط المستخدم رقماً بنفسه (يظهر فوق اللوحة) نحفظه مع صورة الكابتشا
+        if (cfg.autoLearn && features != null && known == null && iso != null) {
+            val entered = readEnteredDigit(bitmap, keypad)
+            if (entered != null && entered != finalDigit) {
+                CaptchaSamplesStore.learnFromUser(features, entered[0]) { iso.image }
             }
         }
 
@@ -368,50 +392,103 @@ class AiScreenEngine(private val context: Context) {
         )
     }
 
-    /** لوحة الأرقام: 3 أعمدة من الأزرار المستديرة عند 25% و50% و75% من العرض */
+    /**
+     * لوحة الأرقام: نكشف الصفوف بمسح عمودي قرب حافة العمود الأول (موقع اللوحة يتغير حسب عدد أسطر النص)،
+     * ثم الأعمدة بمسح أفقي داخل أحد الصفوف.
+     */
     private fun detectKeypad(bitmap: Bitmap): Keypad? {
         val w = bitmap.width
         val h = bitmap.height
         if (w < 200 || h < 400) return null
 
         val bg = bitmap.getPixel((w * 0.06f).toInt(), (h * 0.62f).toInt())
-        val row = IntArray(w)
-        var good = 0
-        var colRuns: List<IntArray>? = null
 
-        for (yf in floatArrayOf(0.592f, 0.675f, 0.761f)) {
-            bitmap.getPixels(row, 0, w, 0, (h * yf).toInt(), w, 1)
+        // الصفوف
+        val y0 = (h * 0.35f).toInt()
+        val len = h - y0
+        val col = IntArray(len)
+        bitmap.getPixels(col, 0, 1, (w * 0.21f).toInt(), y0, 1, len)
+        val minH = (h * 0.05f).toInt()
+        val maxH = (h * 0.09f).toInt()
+        val vr = verticalRuns(col, len, bg, 14, minH).filter { it[1] - it[0] <= maxH }
+        var triple: List<IntArray>? = null
+        for (i in 0..vr.size - 3) {
+            val p1 = vr[i + 1][0] - vr[i][0]
+            val p2 = vr[i + 2][0] - vr[i + 1][0]
+            if (abs(p1 - p2) <= 14 && p1 >= (h * 0.06f).toInt() && p1 <= (h * 0.10f).toInt()) {
+                triple = listOf(vr[i], vr[i + 1], vr[i + 2])
+                break
+            }
+        }
+        if (triple == null) return null
+
+        val rows = ArrayList<IntArray>()
+        for (r in triple) rows.add(intArrayOf(y0 + r[0], y0 + r[1]))
+        val pitch = rows[2][0] - rows[1][0]
+        val s4 = rows[2][0] + pitch
+        val e4 = min(h - 1, s4 + (rows[2][1] - rows[2][0]))
+        rows.add(intArrayOf(s4, e4))
+
+        // الأعمدة
+        val row = IntArray(w)
+        var colRuns: List<IntArray>? = null
+        val bh = rows[0][1] - rows[0][0]
+        for (f in floatArrayOf(0.12f, 0.88f, 0.5f)) {
+            bitmap.getPixels(row, 0, w, 0, rows[0][0] + (bh * f).toInt(), w, 1)
             val runs = horizontalRuns(row, w, bg, 14, (w * 0.10f).toInt(), (w * 0.28f).toInt(), (w * 0.05f).toInt())
             if (runs.size == 3) {
                 val c0 = (runs[0][0] + runs[0][1]) / 2f / w
                 val c1 = (runs[1][0] + runs[1][1]) / 2f / w
                 val c2 = (runs[2][0] + runs[2][1]) / 2f / w
                 if (abs(c0 - 0.25f) < 0.07f && abs(c1 - 0.50f) < 0.07f && abs(c2 - 0.75f) < 0.07f) {
-                    good++
-                    if (colRuns == null) colRuns = runs
+                    colRuns = runs
+                    break
                 }
             }
         }
-        if (good < 2 || colRuns == null) return null
-
-        // الصفوف: مسح عمودي عند منتصف الشاشة
-        // نمسح قرب حافة العمود الأول (بعيداً عن الرقم داخل الزر)
-        val y0 = (h * 0.55f).toInt()
-        val len = h - y0
-        val col = IntArray(len)
-        bitmap.getPixels(col, 0, 1, colRuns[0][0] + (w * 0.012f).toInt(), y0, 1, len)
-        val vr = verticalRuns(col, len, bg, 14, (h * 0.04f).toInt())
-        if (vr.size < 3) return null
-
-        val rows = ArrayList<IntArray>()
-        for (r in vr.take(4)) rows.add(intArrayOf(y0 + r[0], y0 + r[1]))
-        if (rows.size == 3) {
-            val pitch = rows[2][0] - rows[1][0]
-            val s = rows[2][0] + pitch
-            val e = min(h - 1, s + (rows[2][1] - rows[2][0]))
-            rows.add(intArrayOf(s, e))
-        }
+        if (colRuns == null) return null
         return Keypad(colRuns, rows)
+    }
+
+    /** الرقم الذي ظهر فوق لوحة الأرقام بعد أن ضغط المستخدم (أبيض على خلفية داكنة) */
+    private suspend fun readEnteredDigit(bitmap: Bitmap, keypad: Keypad): String? {
+        return try {
+            val w = bitmap.width
+            val h = bitmap.height
+            val rowTop = keypad.rows[0][0]
+            val top = max(0, rowTop - (h * 0.065f).toInt())
+            val bottom = rowTop - (h * 0.005f).toInt()
+            val left = (w * 0.38f).toInt()
+            val cw = (w * 0.24f).toInt()
+            val chh = bottom - top
+            if (chh < 30 || cw < 30) return null
+
+            val px = IntArray(cw * chh)
+            bitmap.getPixels(px, 0, cw, left, top, cw, chh)
+            var white = 0
+            val m = 24
+            val ow = cw + 2 * m
+            val oh = chh + 2 * m
+            val out = IntArray(ow * oh) { Color.WHITE }
+            for (y in 0 until chh) {
+                for (x in 0 until cw) {
+                    if (isWhiteText(px[y * cw + x])) {
+                        out[(y + m) * ow + (x + m)] = Color.BLACK
+                        white++
+                    }
+                }
+            }
+            if (white < 300) return null
+            val bmp = Bitmap.createBitmap(ow, oh, Bitmap.Config.ARGB_8888)
+            bmp.setPixels(out, 0, ow, 0, 0, ow, oh)
+            try {
+                readSingleDigit(bmp)
+            } finally {
+                bmp.recycle()
+            }
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     /**

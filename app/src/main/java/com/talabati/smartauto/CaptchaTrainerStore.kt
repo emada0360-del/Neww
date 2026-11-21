@@ -156,6 +156,28 @@ object CaptchaTrainerStore {
         persist(context)
     }
 
+    /** يتراجع عن تدريب خاطئ: ينقص وزن العينة الأقرب لنفس الرقم أو يحذفها */
+    @Synchronized
+    fun untrainSample(context: Context, digit: Char, featureVector: FloatArray?) {
+        if (featureVector == null) return
+        ensureLoaded(context)
+        var bestIdx = -1
+        var bestSim = 0.80f
+        for (i in samples.indices) {
+            if (samples[i].digit != digit) continue
+            val sim = cosineSimilarity(samples[i].vector, featureVector)
+            if (sim > bestSim) {
+                bestSim = sim
+                bestIdx = i
+            }
+        }
+        if (bestIdx < 0) return
+        val cur = samples[bestIdx]
+        if (cur.weight <= 1) samples.removeAt(bestIdx)
+        else samples[bestIdx] = TrainedSample(cur.digit, cur.vector, cur.weight - 1)
+        persist(context)
+    }
+
     private fun cosineSimilarity(a: FloatArray, b: FloatArray): Float {
         if (a.size != b.size) return 0f
         var dot = 0f
