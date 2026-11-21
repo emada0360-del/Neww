@@ -156,6 +156,14 @@ object CaptchaTrainerStore {
         persist(context)
     }
 
+    /** يمسح كل ما تعلّمه الـAI (يبدأ من جديد) */
+    @Synchronized
+    fun clearAll(context: Context) {
+        ensureLoaded(context)
+        samples.clear()
+        persist(context)
+    }
+
     /** يتراجع عن تدريب خاطئ: ينقص وزن العينة الأقرب لنفس الرقم أو يحذفها */
     @Synchronized
     fun untrainSample(context: Context, digit: Char, featureVector: FloatArray?) {

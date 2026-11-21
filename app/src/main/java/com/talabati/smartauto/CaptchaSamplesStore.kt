@@ -10,6 +10,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import kotlin.random.Random
 
@@ -17,7 +18,6 @@ import kotlin.random.Random
 data class CaptchaSample(
     val id: String,
     val features: FloatArray,
-    val thumbPng: ByteArray,
     val label: String
 )
 
@@ -29,7 +29,9 @@ object CaptchaSamplesStore {
 
     private var file: File? = null
     private var appContext: Context? = null
+    private var thumbDir: File? = null
     private val lock = Any()
+    private var legacyMigrated = false
     private val _items = MutableStateFlow<List<CaptchaSample>>(emptyList())
     val items: StateFlow<List<CaptchaSample>> = _items.asStateFlow()
 
@@ -39,9 +41,12 @@ object CaptchaSamplesStore {
             appContext = context.applicationContext
             val f = File(context.applicationContext.filesDir, "captcha_samples.json")
             file = f
+            thumbDir = File(context.applicationContext.filesDir, "captcha_thumbs").also { it.mkdirs() }
             if (f.exists()) {
                 try {
-                    _items.value = parse(f.readText())
+                    val list = parse(f.readText())
+                    _items.value = list
+                    if (legacyMigrated) persistLocked()
                 } catch (_: Throwable) {
                 }
             }
@@ -58,20 +63,19 @@ object CaptchaSamplesStore {
             if (list.size >= MAX_ITEMS) {
                 val victim = list.lastOrNull { it.label.isEmpty() } ?: list.last()
                 list.remove(victim)
+                deleteThumb(victim.id)
             }
+            val id = newId()
             val bmp = try {
                 thumb()
             } catch (_: Throwable) {
                 null
             }
-            val png = if (bmp != null) {
-                val bos = ByteArrayOutputStream()
-                bmp.compress(Bitmap.CompressFormat.PNG, 100, bos)
-                bos.toByteArray()
-            } else {
-                ByteArray(0)
+            if (bmp != null) {
+                saveThumb(id, bmp)
+                bmp.recycle()
             }
-            list.add(0, CaptchaSample(newId(), features.copyOf(), png, ""))
+            list.add(0, CaptchaSample(id, features.copyOf(), ""))
             _items.value = list
             persistLocked()
         }
@@ -138,6 +142,7 @@ object CaptchaSamplesStore {
 
     fun delete(id: String) {
         synchronized(lock) {
+            deleteThumb(id)
             _items.value = _items.value.filter { it.id != id }
             persistLocked()
         }
@@ -145,8 +150,39 @@ object CaptchaSamplesStore {
 
     fun clearUnlabeled() {
         synchronized(lock) {
+            _items.value.filter { it.label.isEmpty() }.forEach { deleteThumb(it.id) }
             _items.value = _items.value.filter { it.label.isNotEmpty() }
             persistLocked()
+        }
+    }
+
+    /** يمسح كل الصور والأرقام المحفوظة (ويبدأ من جديد) */
+    fun clearAll() {
+        synchronized(lock) {
+            _items.value.forEach { deleteThumb(it.id) }
+            _items.value = emptyList()
+            persistLocked()
+        }
+    }
+
+    /** مسار صورة العرض الملوّنة (أو null) */
+    fun thumbPath(id: String): String? {
+        val f = thumbDir?.let { File(it, "$id.img") } ?: return null
+        return if (f.exists()) f.path else null
+    }
+
+    private fun saveThumb(id: String, bmp: Bitmap) {
+        try {
+            val f = File(thumbDir ?: return, "$id.img")
+            FileOutputStream(f).use { bmp.compress(Bitmap.CompressFormat.JPEG, 80, it) }
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun deleteThumb(id: String) {
+        try {
+            File(thumbDir ?: return, "$id.img").delete()
+        } catch (_: Throwable) {
         }
     }
 
@@ -177,11 +213,20 @@ object CaptchaSamplesStore {
         val out = ArrayList<CaptchaSample>()
         for (i in 0 until arr.length()) {
             val o = arr.getJSONObject(i)
+            val id = o.getString("id")
+            // صور النسخة القديمة كانت داخل الملف: ننقلها لملف مستقل
+            val legacy = o.optString("t", "")
+            if (legacy.isNotEmpty()) {
+                try {
+                    File(thumbDir ?: continue, "$id.img").writeBytes(Base64.decode(legacy, Base64.NO_WRAP))
+                    legacyMigrated = true
+                } catch (_: Throwable) {
+                }
+            }
             out.add(
                 CaptchaSample(
-                    id = o.getString("id"),
+                    id = id,
                     features = decode(o.getString("f")),
-                    thumbPng = Base64.decode(o.optString("t", ""), Base64.NO_WRAP),
                     label = o.optString("l", "")
                 )
             )
@@ -197,7 +242,6 @@ object CaptchaSamplesStore {
                 val o = JSONObject()
                 o.put("id", s.id)
                 o.put("f", encode(s.features))
-                o.put("t", Base64.encodeToString(s.thumbPng, Base64.NO_WRAP))
                 o.put("l", s.label)
                 arr.put(o)
             }

@@ -60,6 +60,19 @@ fun CaptchaSamplesSection() {
         for (item in list.take(60)) {
             CaptchaRow(item)
         }
+        var confirmClear by remember { mutableStateOf(false) }
+        val ctx = androidx.compose.ui.platform.LocalContext.current
+        TextButton(onClick = {
+            if (confirmClear) {
+                CaptchaSamplesStore.clearAll()
+                CaptchaTrainerStore.clearAll(ctx)
+                confirmClear = false
+            } else {
+                confirmClear = true
+            }
+        }) {
+            Text(if (confirmClear) "اضغط مرة ثانية للتأكيد (يمسح كل شي)" else "مسح الكل والبدء من جديد")
+        }
         if (list.any { it.label.isEmpty() }) {
             TextButton(onClick = { CaptchaSamplesStore.clearUnlabeled() }) {
                 Text("مسح اللي بدون رقم")
@@ -72,7 +85,7 @@ fun CaptchaSamplesSection() {
 private fun CaptchaRow(item: CaptchaSample) {
     val image = remember(item.id) {
         try {
-            BitmapFactory.decodeByteArray(item.thumbPng, 0, item.thumbPng.size)?.asImageBitmap()
+            CaptchaSamplesStore.thumbPath(item.id)?.let { BitmapFactory.decodeFile(it)?.asImageBitmap() }
         } catch (_: Throwable) {
             null
         }

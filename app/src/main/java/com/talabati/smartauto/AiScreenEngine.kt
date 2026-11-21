@@ -49,7 +49,9 @@ class AiScreenEngine(private val context: Context) {
         val image: Bitmap,
         val mask: BooleanArray,
         val gw: Int,
-        val gh: Int
+        val gh: Int,
+        /** مستطيل حول الرقم بإحداثيات الشاشة (لصورة العرض الملوّنة) */
+        val box: Rect
     )
 
     private val digitRecognizer: TextRecognizer =
@@ -385,18 +387,10 @@ class AiScreenEngine(private val context: Context) {
         // حفظ صورة الكابتشا بالخلفية (لا يؤخر الضغط)
         if (iso != null && cfg.autoLearn && features != null && !CaptchaSamplesStore.hasSimilar(features)) {
             val f = features
-            val copy = try {
-                iso.image.copy(Bitmap.Config.ARGB_8888, false)
-            } catch (_: Throwable) {
-                null
-            }
-            if (copy != null) {
+            val crop = colorCrop(bitmap, iso)
+            if (crop != null) {
                 bgScope.launch {
-                    try {
-                        CaptchaSamplesStore.addIfNew(f) { copy }
-                    } finally {
-                        copy.recycle()
-                    }
+                    CaptchaSamplesStore.addIfNew(f) { crop }
                 }
             }
         }
@@ -443,7 +437,7 @@ class AiScreenEngine(private val context: Context) {
         if (cfg.autoLearn && features != null && known == null && iso != null) {
             val entered = readEnteredDigit(bitmap, keypad)
             if (entered != null && entered != finalDigit) {
-                CaptchaSamplesStore.learnFromUser(features, entered[0]) { iso.image }
+                CaptchaSamplesStore.learnFromUser(features, entered[0]) { colorCrop(bitmap, iso) }
             }
         }
 
@@ -564,6 +558,46 @@ class AiScreenEngine(private val context: Context) {
      * عزل رقم الكابتشا: نختار اللون السائد (الرقم سميك والخطوط والنقاط رفيعة)،
      * نحذف البكسلات المعزولة، ونُبقي أكبر الكتل المتصلة فقط. الناتج صورة سوداء على أبيض.
      */
+    /** إغلاق مورفولوجي 3x3 (تكبير ثم تصغير) لسدّ الشقوق الرفيعة */
+    private fun closeMask(a: BooleanArray, gw: Int, gh: Int, t: BooleanArray) {
+        for (y in 0 until gh) {
+            for (x in 0 until gw) {
+                val i = y * gw + x
+                t[i] = a[i] || (x > 0 && a[i - 1]) || (x < gw - 1 && a[i + 1])
+            }
+        }
+        for (y in 0 until gh) {
+            for (x in 0 until gw) {
+                val i = y * gw + x
+                a[i] = t[i] || (y > 0 && t[i - gw]) || (y < gh - 1 && t[i + gw])
+            }
+        }
+        for (y in 0 until gh) {
+            for (x in 0 until gw) {
+                val i = y * gw + x
+                t[i] = a[i] && x > 0 && a[i - 1] && x < gw - 1 && a[i + 1]
+            }
+        }
+        for (y in 0 until gh) {
+            for (x in 0 until gw) {
+                val i = y * gw + x
+                a[i] = t[i] && y > 0 && t[i - gw] && y < gh - 1 && t[i + gw]
+            }
+        }
+    }
+
+    /** نسخة ملوّنة مقصوصة حول الرقم (للعرض في القائمة). المستلِم هو من يُحرّرها */
+    private fun colorCrop(bitmap: Bitmap, iso: Isolated): Bitmap? {
+        return try {
+            val b = iso.box
+            val w = b.width()
+            val h = b.height()
+            if (w < 8 || h < 8) null else Bitmap.createBitmap(bitmap, b.left, b.top, w, h)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     private fun isolateCaptchaDigit(bitmap: Bitmap): Isolated? {
         return try {
             val top = (bitmap.height * 0.17f).toInt()
@@ -587,7 +621,7 @@ class AiScreenEngine(private val context: Context) {
                 val base = gy * 2 * cw
                 for (gx in 0 until gw) {
                     Color.colorToHSV(px[base + gx * 2], hsv)
-                    if (hsv[1] > 0.45f && hsv[2] > 0.45f) {
+                    if (hsv[1] > 0.38f && hsv[2] > 0.40f) {
                         val i = gy * gw + gx
                         sat[i] = true
                         hue[i] = hsv[0]
@@ -614,6 +648,7 @@ class AiScreenEngine(private val context: Context) {
             val mask = BooleanArray(n)
             val lab = IntArray(n)
             val queue = IntArray(n)
+            val tmp = BooleanArray(n)
             var fin: BooleanArray? = null
             var bestArea = 0
 
@@ -626,9 +661,11 @@ class AiScreenEngine(private val context: Context) {
                     if (sat[i]) {
                         var d = abs(hue[i] - center)
                         if (d > 180f) d = 360f - d
-                        keep[i] = d <= 14f
+                        keep[i] = d <= 18f
                     }
                 }
+                // سدّ الشقوق اللي تسببها الخطوط الرفيعة العابرة فوق الرقم
+                closeMask(keep, gw, gh, tmp)
                 // فلتر الأغلبية: يحذف الخطوط الرفيعة والنقاط
                 for (gy in 1 until gh - 1) {
                     for (gx in 1 until gw - 1) {
@@ -687,6 +724,7 @@ class AiScreenEngine(private val context: Context) {
                 // الرقم كتلة «ممتلئة» وصغيرة؛ الخطوط طويلة وفارغة فتُستبعد
                 val ok = BooleanArray(areas.size)
                 var maxA = 0
+                var maxId = -1
                 for (id in areas.indices) {
                     val bx = boxes[id]
                     val bw = bx[1] - bx[0] + 1
@@ -694,13 +732,25 @@ class AiScreenEngine(private val context: Context) {
                     val fill = areas[id].toFloat() / (bw * bh)
                     if (areas[id] >= 40 && fill >= 0.2f && bh >= 12 && bh <= gh * 0.6f && bw <= gw * 0.4f) {
                         ok[id] = true
-                        if (areas[id] > maxA) maxA = areas[id]
+                        if (areas[id] > maxA) {
+                            maxA = areas[id]
+                            maxId = id
+                        }
                     }
                 }
                 if (maxA > bestArea) {
                     val f = BooleanArray(n)
+                    val mb = boxes[maxId]
+                    val ex = 14
                     for (i in 0 until n) {
-                        if (mask[i] && ok[lab[i]] && areas[lab[i]] >= maxA / 4) f[i] = true
+                        if (!mask[i]) continue
+                        val id = lab[i]
+                        val bx = boxes[id]
+                        // قطع الرقم الصغيرة القريبة من الكتلة الرئيسية تبقى
+                        val near = areas[id] >= 10 &&
+                            bx[1] >= mb[0] - ex && bx[0] <= mb[1] + ex &&
+                            bx[3] >= mb[2] - ex && bx[2] <= mb[3] + ex
+                        if ((ok[id] && areas[id] >= maxA / 4) || near) f[i] = true
                     }
                     fin = f
                     bestArea = maxA
@@ -744,7 +794,14 @@ class AiScreenEngine(private val context: Context) {
             }
             val bmp = Bitmap.createBitmap(ow, oh, Bitmap.Config.ARGB_8888)
             bmp.setPixels(out, 0, ow, 0, 0, ow, oh)
-            Isolated(bmp, finMask, gw, gh)
+            val mg = 36
+            val box = Rect(
+                max(0, left + minGx * 2 - mg),
+                max(0, top + minGy * 2 - mg),
+                min(bitmap.width, left + (maxGx + 1) * 2 + mg),
+                min(bitmap.height, top + (maxGy + 1) * 2 + mg)
+            )
+            Isolated(bmp, finMask, gw, gh, box)
         } catch (_: Throwable) {
             null
         }
