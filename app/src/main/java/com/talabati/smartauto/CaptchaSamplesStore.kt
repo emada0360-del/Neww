@@ -23,7 +23,7 @@ data class CaptchaSample(
 
 object CaptchaSamplesStore {
 
-    private const val MAX_ITEMS = 40
+    private const val MAX_ITEMS = 100
     private const val SAME_THRESHOLD = 0.95f
     private const val LABEL_WEIGHT = 3
 
@@ -56,7 +56,7 @@ object CaptchaSamplesStore {
         synchronized(lock) {
             val list = ArrayList(_items.value)
             if (list.size >= MAX_ITEMS) {
-                val victim = list.lastOrNull { it.label.isEmpty() } ?: return
+                val victim = list.lastOrNull { it.label.isEmpty() } ?: list.last()
                 list.remove(victim)
             }
             val bmp = try {
