@@ -379,9 +379,9 @@ class AiScreenEngine(private val context: Context) {
         var good = 0
         var colRuns: List<IntArray>? = null
 
-        for (yf in floatArrayOf(0.66f, 0.76f, 0.85f)) {
+        for (yf in floatArrayOf(0.592f, 0.675f, 0.761f)) {
             bitmap.getPixels(row, 0, w, 0, (h * yf).toInt(), w, 1)
-            val runs = horizontalRuns(row, w, bg, 14, (w * 0.10f).toInt(), (w * 0.28f).toInt())
+            val runs = horizontalRuns(row, w, bg, 14, (w * 0.10f).toInt(), (w * 0.28f).toInt(), (w * 0.05f).toInt())
             if (runs.size == 3) {
                 val c0 = (runs[0][0] + runs[0][1]) / 2f / w
                 val c1 = (runs[1][0] + runs[1][1]) / 2f / w
@@ -395,10 +395,11 @@ class AiScreenEngine(private val context: Context) {
         if (good < 2 || colRuns == null) return null
 
         // الصفوف: مسح عمودي عند منتصف الشاشة
-        val y0 = (h * 0.58f).toInt()
+        // نمسح قرب حافة العمود الأول (بعيداً عن الرقم داخل الزر)
+        val y0 = (h * 0.55f).toInt()
         val len = h - y0
         val col = IntArray(len)
-        bitmap.getPixels(col, 0, 1, w / 2, y0, 1, len)
+        bitmap.getPixels(col, 0, 1, colRuns[0][0] + (w * 0.012f).toInt(), y0, 1, len)
         val vr = verticalRuns(col, len, bg, 14, (h * 0.04f).toInt())
         if (vr.size < 3) return null
 
@@ -449,87 +450,123 @@ class AiScreenEngine(private val context: Context) {
                 }
             }
 
-            var pk = -1
-            var best = 0
-            for (i in 0 until 72) {
-                val s = hist[(i + 71) % 72] + hist[i] + hist[(i + 1) % 72]
-                if (s > best) {
-                    best = s
-                    pk = i
-                }
+            // أقوى ألوان في الصورة (الخطوط الملوّنة قد تغلب لون الرقم، فنجرّب عدة ألوان)
+            val order = (0 until 72).sortedByDescending {
+                hist[(it + 71) % 72] + hist[it] + hist[(it + 1) % 72]
             }
-            if (pk < 0 || best < 60) return null
-            val center = pk * 5f + 2.5f
-
-            val keep = BooleanArray(gw * gh)
-            for (i in keep.indices) {
-                if (sat[i]) {
-                    var d = abs(hue[i] - center)
-                    if (d > 180f) d = 360f - d
-                    keep[i] = d <= 14f
-                }
+            val cands = ArrayList<Int>()
+            for (i in order) {
+                val sc = hist[(i + 71) % 72] + hist[i] + hist[(i + 1) % 72]
+                if (sc < 60) break
+                if (cands.all { j -> min(abs(i - j), 72 - abs(i - j)) >= 3 }) cands.add(i)
+                if (cands.size >= 6) break
             }
+            if (cands.isEmpty()) return null
 
-            // فلتر الأغلبية: يحذف الخطوط الرفيعة والنقاط
-            val mask = BooleanArray(gw * gh)
-            for (gy in 1 until gh - 1) {
-                for (gx in 1 until gw - 1) {
-                    val i = gy * gw + gx
-                    if (!keep[i]) continue
-                    var n = 0
-                    for (dy in -1..1) {
-                        for (dx in -1..1) {
-                            if ((dx != 0 || dy != 0) && keep[i + dy * gw + dx]) n++
-                        }
+            val n = gw * gh
+            val keep = BooleanArray(n)
+            val mask = BooleanArray(n)
+            val lab = IntArray(n)
+            val queue = IntArray(n)
+            var fin: BooleanArray? = null
+            var bestArea = 0
+
+            for (pk in cands) {
+                val center = pk * 5f + 2.5f
+                java.util.Arrays.fill(keep, false)
+                java.util.Arrays.fill(mask, false)
+                java.util.Arrays.fill(lab, -1)
+                for (i in 0 until n) {
+                    if (sat[i]) {
+                        var d = abs(hue[i] - center)
+                        if (d > 180f) d = 360f - d
+                        keep[i] = d <= 14f
                     }
-                    if (n >= 5) mask[i] = true
                 }
-            }
-
-            // الكتل المتصلة
-            val lab = IntArray(gw * gh) { -1 }
-            val queue = IntArray(gw * gh)
-            val areas = ArrayList<Int>()
-            for (start in mask.indices) {
-                if (!mask[start] || lab[start] >= 0) continue
-                val id = areas.size
-                var head = 0
-                var tail = 0
-                queue[tail++] = start
-                lab[start] = id
-                var count = 0
-                while (head < tail) {
-                    val cur = queue[head++]
-                    count++
-                    val cx = cur % gw
-                    val cy = cur / gw
-                    for (dy in -1..1) {
-                        val ny = cy + dy
-                        if (ny < 0 || ny >= gh) continue
-                        for (dx in -1..1) {
-                            val nx = cx + dx
-                            if (nx < 0 || nx >= gw) continue
-                            val ni = ny * gw + nx
-                            if (mask[ni] && lab[ni] < 0) {
-                                lab[ni] = id
-                                queue[tail++] = ni
+                // فلتر الأغلبية: يحذف الخطوط الرفيعة والنقاط
+                for (gy in 1 until gh - 1) {
+                    for (gx in 1 until gw - 1) {
+                        val i = gy * gw + gx
+                        if (!keep[i]) continue
+                        var c = 0
+                        for (dy in -1..1) {
+                            for (dx in -1..1) {
+                                if ((dx != 0 || dy != 0) && keep[i + dy * gw + dx]) c++
+                            }
+                        }
+                        if (c >= 6) mask[i] = true
+                    }
+                }
+                // الكتل المتصلة + صندوق كل كتلة
+                val areas = ArrayList<Int>()
+                val boxes = ArrayList<IntArray>()
+                for (start in 0 until n) {
+                    if (!mask[start] || lab[start] >= 0) continue
+                    val id = areas.size
+                    var head = 0
+                    var tail = 0
+                    queue[tail++] = start
+                    lab[start] = id
+                    var count = 0
+                    var x0 = gw
+                    var x1 = -1
+                    var y0 = gh
+                    var y1 = -1
+                    while (head < tail) {
+                        val cur = queue[head++]
+                        count++
+                        val cx = cur % gw
+                        val cy = cur / gw
+                        if (cx < x0) x0 = cx
+                        if (cx > x1) x1 = cx
+                        if (cy < y0) y0 = cy
+                        if (cy > y1) y1 = cy
+                        for (dy in -1..1) {
+                            val ny = cy + dy
+                            if (ny < 0 || ny >= gh) continue
+                            for (dx in -1..1) {
+                                val nx = cx + dx
+                                if (nx < 0 || nx >= gw) continue
+                                val ni = ny * gw + nx
+                                if (mask[ni] && lab[ni] < 0) {
+                                    lab[ni] = id
+                                    queue[tail++] = ni
+                                }
                             }
                         }
                     }
+                    areas.add(count)
+                    boxes.add(intArrayOf(x0, x1, y0, y1))
                 }
-                areas.add(count)
+                // الرقم كتلة «ممتلئة» وصغيرة؛ الخطوط طويلة وفارغة فتُستبعد
+                val ok = BooleanArray(areas.size)
+                var maxA = 0
+                for (id in areas.indices) {
+                    val bx = boxes[id]
+                    val bw = bx[1] - bx[0] + 1
+                    val bh = bx[3] - bx[2] + 1
+                    val fill = areas[id].toFloat() / (bw * bh)
+                    if (areas[id] >= 40 && fill >= 0.2f && bh >= 12 && bh <= gh * 0.6f && bw <= gw * 0.4f) {
+                        ok[id] = true
+                        if (areas[id] > maxA) maxA = areas[id]
+                    }
+                }
+                if (maxA > bestArea) {
+                    val f = BooleanArray(n)
+                    for (i in 0 until n) {
+                        if (mask[i] && ok[lab[i]] && areas[lab[i]] >= maxA / 4) f[i] = true
+                    }
+                    fin = f
+                    bestArea = maxA
+                }
             }
-            val maxArea = areas.maxOrNull() ?: return null
-            if (maxArea < 40) return null
-
-            val fin = BooleanArray(gw * gh)
+            val finMask = fin ?: return null
             var minGx = gw
             var maxGx = -1
             var minGy = gh
             var maxGy = -1
-            for (i in mask.indices) {
-                if (mask[i] && areas[lab[i]] >= maxArea / 4) {
-                    fin[i] = true
+            for (i in 0 until n) {
+                if (finMask[i]) {
                     val gx = i % gw
                     val gy = i / gw
                     if (gx < minGx) minGx = gx
@@ -546,7 +583,7 @@ class AiScreenEngine(private val context: Context) {
             val out = IntArray(ow * oh) { Color.WHITE }
             for (gy in minGy..maxGy) {
                 for (gx in minGx..maxGx) {
-                    if (!fin[gy * gw + gx]) continue
+                    if (!finMask[gy * gw + gx]) continue
                     val ox = (gx - minGx + m) * 2
                     val oy = (gy - minGy + m) * 2
                     for (yy in (oy - 1)..(oy + 2)) {
@@ -560,7 +597,7 @@ class AiScreenEngine(private val context: Context) {
             }
             val bmp = Bitmap.createBitmap(ow, oh, Bitmap.Config.ARGB_8888)
             bmp.setPixels(out, 0, ow, 0, 0, ow, oh)
-            Isolated(bmp, fin, gw, gh)
+            Isolated(bmp, finMask, gw, gh)
         } catch (_: Throwable) {
             null
         }
@@ -694,17 +731,20 @@ class AiScreenEngine(private val context: Context) {
         bg: Int,
         thr: Int,
         minLen: Int,
-        maxLen: Int
+        maxLen: Int,
+        gapTol: Int = 0
     ): List<IntArray> {
         val out = ArrayList<IntArray>()
         var s = -1
+        var last = -1
         for (x in 0..w) {
             val on = x < w && differs(row[x], bg, thr)
             if (on) {
                 if (s < 0) s = x
-            } else if (s >= 0) {
-                val len = x - s
-                if (len in minLen..maxLen) out.add(intArrayOf(s, x))
+                last = x
+            } else if (s >= 0 && (x >= w || x - last > gapTol)) {
+                val len = last + 1 - s
+                if (len in minLen..maxLen) out.add(intArrayOf(s, last + 1))
                 s = -1
             }
         }
