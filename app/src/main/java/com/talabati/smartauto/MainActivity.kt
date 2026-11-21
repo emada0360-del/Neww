@@ -82,6 +82,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         AutomationStore.init(applicationContext)
         LearnedStore.init(applicationContext)
+        CaptchaSamplesStore.init(applicationContext)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -277,6 +278,11 @@ private fun SmartAutoScreen(
                         helper = "تظهر هنا مطاعم الطلبات المطابقة لمناطقك. فعّل «محظور» لتجاهل مطعم.",
                         emptyHint = "لم تُرصد مطاعم بعد"
                     )
+                }
+
+                // ───── الكابتشا ─────
+                SectionCard(title = "الكابتشا المرصودة") {
+                    CaptchaSamplesSection()
                 }
 
                 SectionCard(title = "الرصد التلقائي") {

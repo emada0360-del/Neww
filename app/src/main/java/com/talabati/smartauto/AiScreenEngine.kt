@@ -61,6 +61,7 @@ class AiScreenEngine(private val context: Context) {
     init {
         CaptchaTrainerStore.ensureLoaded(context)
         LearnedStore.init(context)
+        CaptchaSamplesStore.init(context)
     }
 
     // ───────────────────────── التحليل الرئيسي ─────────────────────────
@@ -70,7 +71,7 @@ class AiScreenEngine(private val context: Context) {
         if (greenRect != null) return analyzeOffer(bitmap, greenRect, cfg)
 
         val keypad = detectKeypad(bitmap)
-        if (keypad != null) return analyzeCaptcha(bitmap, keypad)
+        if (keypad != null) return analyzeCaptcha(bitmap, keypad, cfg)
 
         return ScanResult()
     }
@@ -317,7 +318,7 @@ class AiScreenEngine(private val context: Context) {
 
     // ───────────────────────── شاشة الكابتشا ─────────────────────────
 
-    private suspend fun analyzeCaptcha(bitmap: Bitmap, keypad: Keypad): ScanResult {
+    private suspend fun analyzeCaptcha(bitmap: Bitmap, keypad: Keypad, cfg: AutomationConfig): ScanResult {
         var digit: String? = null
         var features: FloatArray? = null
 
@@ -325,6 +326,9 @@ class AiScreenEngine(private val context: Context) {
         if (iso != null) {
             features = CaptchaTrainerStore.featureFromMask(iso.mask, iso.gw, iso.gh)
             digit = readSingleDigit(iso.image)
+            if (cfg.autoLearn && features != null) {
+                CaptchaSamplesStore.addIfNew(features) { iso.image }
+            }
             iso.image.recycle()
         }
 
@@ -336,6 +340,8 @@ class AiScreenEngine(private val context: Context) {
         val ai = CaptchaTrainerStore.predict(context, features)
 
         val finalDigit: String? = when {
+            // رقم علّمه المستخدم (ثقة عالية) له الأولوية على قراءة الـOCR
+            ai != null && ai.second >= 0.92f -> ai.first.toString()
             digit != null -> digit
             ai != null && ai.second >= 0.80f -> ai.first.toString()
             else -> null
