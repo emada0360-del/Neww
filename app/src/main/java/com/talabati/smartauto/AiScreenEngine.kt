@@ -364,7 +364,7 @@ class AiScreenEngine(private val context: Context) {
         }
 
         // تدريب الـAI فقط من القراءة النظيفة، وعند الاتفاق أو عدم ثقة الـAI
-        if (digit != null && features != null && iso != null) {
+        if (known == null && digit != null && features != null && iso != null) {
             if (ai == null || ai.first.toString() == digit || ai.second < 0.50f) {
                 CaptchaTrainerStore.trainSample(context, digit[0], features)
             }
