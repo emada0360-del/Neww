@@ -23,8 +23,8 @@ data class CaptchaSample(
 
 object CaptchaSamplesStore {
 
-    const val MAX_ITEMS = 300
-    private const val SAME_THRESHOLD = 0.95f
+    const val MAX_ITEMS = 1000
+    private const val SAME_THRESHOLD = 0.90f
     private const val LABEL_WEIGHT = 3
 
     private var file: File? = null

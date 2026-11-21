@@ -50,7 +50,14 @@ fun CaptchaSamplesSection() {
         if (list.isEmpty()) {
             Text(text = "لم تُرصد كابتشا بعد", style = MaterialTheme.typography.bodyMedium)
         }
-        for (item in list) {
+        if (list.size > 60) {
+            Text(
+                text = "يعرض آخر 60 فقط (الباقي محفوظ ويشتغل)",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray
+            )
+        }
+        for (item in list.take(60)) {
             CaptchaRow(item)
         }
         if (list.any { it.label.isEmpty() }) {

@@ -380,33 +380,48 @@ class AiScreenEngine(private val context: Context) {
             }
         }
 
-        if (iso != null) {
-            digit = readSingleDigit(iso.image)
-            if (cfg.autoLearn && features != null && !CaptchaSamplesStore.hasSimilar(features)) {
-                val f = features
-                val copy = try {
-                    iso.image.copy(Bitmap.Config.ARGB_8888, false)
-                } catch (_: Throwable) {
-                    null
-                }
-                if (copy != null) {
-                    bgScope.launch {
-                        try {
-                            CaptchaSamplesStore.addIfNew(f) { copy }
-                        } finally {
-                            copy.recycle()
-                        }
+        val ai = CaptchaTrainerStore.predict(context, features)
+
+        // حفظ صورة الكابتشا بالخلفية (لا يؤخر الضغط)
+        if (iso != null && cfg.autoLearn && features != null && !CaptchaSamplesStore.hasSimilar(features)) {
+            val f = features
+            val copy = try {
+                iso.image.copy(Bitmap.Config.ARGB_8888, false)
+            } catch (_: Throwable) {
+                null
+            }
+            if (copy != null) {
+                bgScope.launch {
+                    try {
+                        CaptchaSamplesStore.addIfNew(f) { copy }
+                    } finally {
+                        copy.recycle()
                     }
                 }
             }
+        }
+
+        // الـAI واثق (تعلّم الشكل): ضغط فوري بدون OCR
+        if (ai != null && ai.second >= 0.92f) {
+            val r = keypad.rectFor(ai.first)
+            if (r != null) {
+                return ScanResult(
+                    ScreenKind.CAPTCHA,
+                    "كابتشا | رقم: ${ai.first} (سريع)",
+                    tapRect = r,
+                    digit = ai.first.toString()
+                )
+            }
+        }
+
+        if (iso != null) {
+            digit = readSingleDigit(iso.image)
         }
 
         // احتياط: قراءة مباشرة من منطقة الصورة إذا فشل العزل
         if (digit == null) {
             digit = readDigitFromCaptchaRegion(bitmap)
         }
-
-        val ai = CaptchaTrainerStore.predict(context, features)
 
         val finalDigit: String? = when {
             known != null -> known
