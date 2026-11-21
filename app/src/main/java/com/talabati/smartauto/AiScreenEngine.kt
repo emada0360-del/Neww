@@ -9,6 +9,11 @@ import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -50,6 +55,9 @@ class AiScreenEngine(private val context: Context) {
     private val digitRecognizer: TextRecognizer =
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
+    // حفظ صور الكابتشا بالخلفية حتى لا يتأخر الضغط
+    private val bgScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     // مخزن بكسلات مشترك لتقليل الـGC (التحليل يتم بشكل متسلسل)
     private var buf = IntArray(0)
 
@@ -66,12 +74,30 @@ class AiScreenEngine(private val context: Context) {
 
     // ───────────────────────── التحليل الرئيسي ─────────────────────────
 
+    // نتيجة آخر طلب شفناه: هل منطقته مستهدفة؟ (نستعملها لتجاهل كابتشا طلب ضغطته بالغلط)
+    private var lastOfferTargeted: Boolean? = null
+    private var lastOfferAt = 0L
+
+    private fun markOffer(targeted: Boolean) {
+        lastOfferTargeted = targeted
+        lastOfferAt = System.currentTimeMillis()
+    }
+
     suspend fun analyzeFrame(bitmap: Bitmap, cfg: AutomationConfig): ScanResult {
         val greenRect = detectOfferBar(bitmap)
         if (greenRect != null) return analyzeOffer(bitmap, greenRect, cfg)
 
         val keypad = detectKeypad(bitmap)
-        if (keypad != null) return analyzeCaptcha(bitmap, keypad, cfg)
+        if (keypad != null) {
+            val res = analyzeCaptcha(bitmap, keypad, cfg)
+            val skip = lastOfferTargeted == false &&
+                System.currentTimeMillis() - lastOfferAt < 120_000L
+            return if (skip) {
+                ScanResult(ScreenKind.CAPTCHA, "كابتشا: الطلب من منطقة/مطعم غير مستهدف — تم التجاهل")
+            } else {
+                res
+            }
+        }
 
         return ScanResult()
     }
@@ -88,6 +114,7 @@ class AiScreenEngine(private val context: Context) {
         }
         val zone = zoneMatch.item
         if (zone == null || !zone.flagged) {
+            markOffer(false)
             val note = if (zoneMatch.isNew) {
                 "رُصدت منطقة جديدة — صنّفها من التطبيق"
             } else {
@@ -105,6 +132,7 @@ class AiScreenEngine(private val context: Context) {
             }
             val rest = rm.item
             if (rest != null && rest.flagged) {
+                markOffer(false)
                 return ScanResult(ScreenKind.OFFER, "مطعم محظور — تم التجاهل")
             }
         }
@@ -113,13 +141,16 @@ class AiScreenEngine(private val context: Context) {
         if (cfg.orderFilterMode != OrderFilterMode.ALL) {
             val isRestaurant = detectRestaurantTag(bitmap)
             if (cfg.orderFilterMode == OrderFilterMode.NORMAL_ONLY && isRestaurant) {
+                markOffer(false)
                 return ScanResult(ScreenKind.OFFER, "طلب مطعم — تم التجاهل (الفلتر: عادي)")
             }
             if (cfg.orderFilterMode == OrderFilterMode.RESTAURANT_ONLY && !isRestaurant) {
+                markOffer(false)
                 return ScanResult(ScreenKind.OFFER, "طلب عادي — تم التجاهل (الفلتر: مطعم)")
             }
         }
 
+        markOffer(true)
         return ScanResult(ScreenKind.OFFER, "طلب مطابق — ضغط على موافق", tapRect = greenRect)
     }
 
@@ -338,9 +369,35 @@ class AiScreenEngine(private val context: Context) {
 
         if (iso != null) {
             features = CaptchaTrainerStore.featureFromMask(iso.mask, iso.gw, iso.gh)
+        }
+
+        // صورة محفوظة برقم مؤكَّد: ضغط فوري بدون OCR
+        val known = if (features != null) CaptchaSamplesStore.findLabel(features) else null
+        if (known != null) {
+            val r = keypad.rectFor(known[0])
+            if (r != null) {
+                return ScanResult(ScreenKind.CAPTCHA, "كابتشا | رقم: $known (محفوظ)", tapRect = r, digit = known)
+            }
+        }
+
+        if (iso != null) {
             digit = readSingleDigit(iso.image)
-            if (cfg.autoLearn && features != null) {
-                CaptchaSamplesStore.addIfNew(features) { iso.image }
+            if (cfg.autoLearn && features != null && !CaptchaSamplesStore.hasSimilar(features)) {
+                val f = features
+                val copy = try {
+                    iso.image.copy(Bitmap.Config.ARGB_8888, false)
+                } catch (_: Throwable) {
+                    null
+                }
+                if (copy != null) {
+                    bgScope.launch {
+                        try {
+                            CaptchaSamplesStore.addIfNew(f) { copy }
+                        } finally {
+                            copy.recycle()
+                        }
+                    }
+                }
             }
         }
 
@@ -350,9 +407,6 @@ class AiScreenEngine(private val context: Context) {
         }
 
         val ai = CaptchaTrainerStore.predict(context, features)
-
-        // رقم أكّده المستخدم سابقاً لنفس الصورة (أعلى أولوية)
-        val known = if (features != null) CaptchaSamplesStore.findLabel(features) else null
 
         val finalDigit: String? = when {
             known != null -> known
@@ -636,6 +690,7 @@ class AiScreenEngine(private val context: Context) {
                     fin = f
                     bestArea = maxA
                 }
+                if (bestArea >= 250) break
             }
             val finMask = fin ?: return null
             var minGx = gw
@@ -869,6 +924,7 @@ class AiScreenEngine(private val context: Context) {
         }
 
     fun close() {
+        bgScope.cancel()
         digitRecognizer.close()
     }
 }

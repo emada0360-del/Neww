@@ -77,6 +77,9 @@ object CaptchaSamplesStore {
         }
     }
 
+    fun hasSimilar(features: FloatArray): Boolean =
+        _items.value.any { dot(it.features, features) > SAME_THRESHOLD }
+
     /** الرقم المؤكَّد لنفس الصورة إن وُجد */
     fun findLabel(features: FloatArray): String? {
         var best: CaptchaSample? = null
