@@ -42,6 +42,11 @@ fun CaptchaSamplesSection() {
             style = MaterialTheme.typography.bodySmall,
             color = Color.Gray
         )
+        val labeled = list.count { it.label.isNotEmpty() }
+        Text(
+            text = "المحفوظ: ${list.size} / ${CaptchaSamplesStore.MAX_ITEMS}   (بأرقام: $labeled)",
+            style = MaterialTheme.typography.bodyMedium
+        )
         if (list.isEmpty()) {
             Text(text = "لم تُرصد كابتشا بعد", style = MaterialTheme.typography.bodyMedium)
         }
