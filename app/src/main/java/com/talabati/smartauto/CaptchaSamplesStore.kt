@@ -81,6 +81,58 @@ object CaptchaSamplesStore {
         }
     }
 
+    /** كل الأرقام المحفوظة (بدون الصور) كنص JSON */
+    fun exportJson(): String {
+        val arr = JSONArray()
+        for (s in _items.value) {
+            val o = JSONObject()
+            o.put("id", s.id)
+            o.put("f", encode(s.features))
+            o.put("l", s.label)
+            arr.put(o)
+        }
+        return arr.toString()
+    }
+
+    fun thumbBytes(id: String): ByteArray? {
+        val f = thumbDir?.let { File(it, "$id.img") } ?: return null
+        return try {
+            if (f.exists()) f.readBytes() else null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /** يدمج أرقام جهاز ثاني (مع صورها) بدون مسح الموجود. يرجع عدد المضاف */
+    fun importFrom(json: String, thumbs: Map<String, ByteArray>): Int {
+        val incoming = try {
+            parse(json)
+        } catch (_: Throwable) {
+            return 0
+        }
+        synchronized(lock) {
+            val list = ArrayList(_items.value)
+            var added = 0
+            for (inc in incoming) {
+                if (list.size >= MAX_ITEMS) break
+                if (list.any { it.id == inc.id }) continue
+                if (list.any { dot(it.features, inc.features) > SAME_THRESHOLD }) continue
+                val tb = thumbs[inc.id]
+                if (tb != null) {
+                    try {
+                        File(thumbDir ?: continue, "${inc.id}.img").writeBytes(tb)
+                    } catch (_: Throwable) {
+                    }
+                }
+                list.add(inc)
+                added++
+            }
+            _items.value = list
+            persistLocked()
+            return added
+        }
+    }
+
     fun hasSimilar(features: FloatArray): Boolean =
         _items.value.any { dot(it.features, features) > SAME_THRESHOLD }
 

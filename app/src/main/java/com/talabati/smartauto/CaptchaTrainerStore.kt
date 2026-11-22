@@ -23,6 +23,68 @@ object CaptchaTrainerStore {
     private var loaded = false
     private val samples = mutableListOf<TrainedSample>()
 
+    /** كل ما تعلّمه الـAI كنص JSON (للنسخ لجهاز ثاني) */
+    @Synchronized
+    fun exportJson(context: Context): String {
+        ensureLoaded(context)
+        val arr = JSONArray()
+        for (s in samples) {
+            val obj = JSONObject()
+            obj.put("d", s.digit.toString())
+            obj.put("w", s.weight)
+            val vArr = JSONArray()
+            for (v in s.vector) vArr.put(v.toDouble())
+            obj.put("v", vArr)
+            arr.put(obj)
+        }
+        return arr.toString()
+    }
+
+    /** يدمج تعلّم جهاز ثاني مع الموجود (بدون مسح). يرجع عدد العينات المضافة/المدموجة */
+    @Synchronized
+    fun importJson(context: Context, text: String): Int {
+        ensureLoaded(context)
+        var n = 0
+        try {
+            val arr = JSONArray(text)
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val dStr = obj.optString("d", "")
+                val w = obj.optInt("w", 1).coerceAtLeast(1)
+                val vArr = obj.optJSONArray("v") ?: continue
+                if (dStr.length != 1 || vArr.length() != GRID_SIZE * GRID_SIZE) continue
+                val vec = FloatArray(GRID_SIZE * GRID_SIZE) { idx -> vArr.optDouble(idx, 0.0).toFloat() }
+                val digit = dStr[0]
+                var merged = false
+                for (k in samples.indices) {
+                    val cur = samples[k]
+                    if (cur.digit == digit && cosineSimilarity(cur.vector, vec) > 0.80f) {
+                        val nw = min(60, cur.weight + w)
+                        val upd = FloatArray(vec.size) { idx ->
+                            (cur.vector[idx] * cur.weight + vec[idx] * w) / (cur.weight + w)
+                        }
+                        normalizeInPlace(upd)
+                        samples[k] = TrainedSample(digit, upd, nw)
+                        merged = true
+                        break
+                    }
+                }
+                if (!merged) {
+                    val same = samples.filter { it.digit == digit }
+                    if (same.size >= MAX_SAMPLES_PER_DIGIT) {
+                        val weakest = same.minByOrNull { it.weight }
+                        if (weakest != null) samples.remove(weakest)
+                    }
+                    samples.add(TrainedSample(digit, vec, min(60, w)))
+                }
+                n++
+            }
+            persist(context)
+        } catch (_: Throwable) {
+        }
+        return n
+    }
+
     @Synchronized
     fun ensureLoaded(context: Context) {
         if (loaded) return

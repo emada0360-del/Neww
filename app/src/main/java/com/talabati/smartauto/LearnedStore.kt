@@ -111,6 +111,46 @@ object LearnedStore {
         }
     }
 
+    /** المناطق والمطاعم المحفوظة كنص JSON (للنسخ لجهاز ثاني) */
+    fun exportJson(): String {
+        val arr = JSONArray()
+        for (item in _items.value) {
+            val o = JSONObject()
+            o.put("id", item.id)
+            o.put("kind", item.kind.name)
+            o.put("sig", encodeSig(item.signature))
+            o.put("thumb", Base64.encodeToString(item.thumbPng, Base64.NO_WRAP))
+            o.put("label", item.label)
+            o.put("flag", item.flagged)
+            arr.put(o)
+        }
+        return arr.toString()
+    }
+
+    /** يدمج عناصر جهاز ثاني مع الموجود (بدون مسح). يرجع عدد المضاف */
+    fun importJson(text: String): Int {
+        val incoming = try {
+            parse(text)
+        } catch (_: Throwable) {
+            return 0
+        }
+        synchronized(lock) {
+            val list = ArrayList(_items.value)
+            var added = 0
+            for (inc in incoming) {
+                if (list.any { it.id == inc.id }) continue
+                val sig = normalize(inc.signature) ?: continue
+                val similar = list.any { it.kind == inc.kind && dot(it.signature, sig) >= MATCH_THRESHOLD }
+                if (similar) continue
+                list.add(inc)
+                added++
+            }
+            _items.value = list
+            persistLocked()
+            return added
+        }
+    }
+
     fun setFlag(id: String, flagged: Boolean) {
         synchronized(lock) {
             _items.value = _items.value.map { if (it.id == id) it.copy(flagged = flagged) else it }

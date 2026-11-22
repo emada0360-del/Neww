@@ -125,7 +125,7 @@ class AiScreenEngine(private val context: Context) {
             return ScanResult(ScreenKind.OFFER, note)
         }
 
-        // مطعم محظور؟ (ويُحفظ المطعم الجديد ليظهر في قائمة المطاعم)
+        // مطعم مفعّل؟ (ويُحفظ المطعم الجديد ليظهر في قائمة المطاعم)
         val nameRect = findRestaurantName(bitmap, pill.top)
         if (nameRect != null) {
             val nameSig = gridSignature(bitmap, nameRect) { p -> isNameRed(p) }
@@ -133,9 +133,15 @@ class AiScreenEngine(private val context: Context) {
                 thumbOf(bitmap, nameRect, 8)
             }
             val rest = rm.item
-            if (rest != null && rest.flagged) {
+            // المطعم لازم يكون «مفعّل» من التطبيق، والجديد يُتجاهل لين تفعّله
+            if (rest == null || !rest.flagged) {
                 markOffer(false)
-                return ScanResult(ScreenKind.OFFER, "مطعم محظور — تم التجاهل")
+                val note = if (rm.isNew) {
+                    "مطعم جديد — فعّله من التطبيق ليشتغل"
+                } else {
+                    "مطعم غير مفعّل — تم التجاهل"
+                }
+                return ScanResult(ScreenKind.OFFER, note)
             }
         }
 

@@ -274,10 +274,15 @@ private fun SmartAutoScreen(
                 SectionCard(title = "المطاعم المرصودة") {
                     LearnedItemsSection(
                         kind = LearnedKind.RESTAURANT,
-                        flagLabel = "محظور",
-                        helper = "تظهر هنا مطاعم الطلبات المطابقة لمناطقك. فعّل «محظور» لتجاهل مطعم.",
+                        flagLabel = "مفعّل",
+                        helper = "تظهر هنا مطاعم الطلبات المطابقة لمناطقك. المطعم الجديد يُتجاهل لين تفعّله «مفعّل».",
                         emptyHint = "لم تُرصد مطاعم بعد"
                     )
+                }
+
+                // ───── نسخ التعلم ─────
+                SectionCard(title = "نسخ التعلم") {
+                    LearningTransferSection()
                 }
 
                 // ───── الكابتشا ─────
