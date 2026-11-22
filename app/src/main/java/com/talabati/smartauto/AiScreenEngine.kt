@@ -126,7 +126,7 @@ class AiScreenEngine(private val context: Context) {
         }
 
         // مطعم محظور؟ (ويُحفظ المطعم الجديد ليظهر في قائمة المطاعم)
-        val nameRect = findRestaurantName(bitmap)
+        val nameRect = findRestaurantName(bitmap, pill.top)
         if (nameRect != null) {
             val nameSig = gridSignature(bitmap, nameRect) { p -> isNameRed(p) }
             val rm = LearnedStore.matchOrLearn(LearnedKind.RESTAURANT, nameSig, cfg.autoLearn) {
@@ -287,11 +287,12 @@ class AiScreenEngine(private val context: Context) {
     }
 
     /** اسم المطعم: نص أحمر داخل المربع الرمادي أعلى بيانات الزبون */
-    private fun findRestaurantName(bitmap: Bitmap): Rect? {
+    private fun findRestaurantName(bitmap: Bitmap, pillTop: Int): Rect? {
         val w = bitmap.width
         val h = bitmap.height
-        val top = (h * 0.525f).toInt()
-        val rh = (h * 0.78f).toInt() - top
+        // من تحت تبويبات (التفاصيل...) إلى فوق شريحة المنطقة (موقعها يتغير حسب عدد أسطر الاسم)
+        val top = (h * 0.485f).toInt()
+        val rh = (pillTop - 4) - top
         if (rh < 20) return null
 
         val px = ensureBuf(w * rh)
@@ -324,14 +325,15 @@ class AiScreenEngine(private val context: Context) {
     private fun detectRestaurantTag(bitmap: Bitmap): Boolean {
         val w = bitmap.width
         val h = bitmap.height
-        val top = (h * 0.31f).toInt()
-        val rh = (h * 0.46f).toInt() - top
+        val top = (h * 0.32f).toInt()
+        val rh = (h * 0.44f).toInt() - top
         if (rh < 20) return false
 
         val px = ensureBuf(w * rh)
         bitmap.getPixels(px, 0, w, 0, top, w, rh)
 
         var count = 0
+        var green = 0
         var y = 0
         while (y < rh) {
             val base = y * w
@@ -342,11 +344,13 @@ class AiScreenEngine(private val context: Context) {
                 val g = (p shr 8) and 0xFF
                 val b = p and 0xFF
                 if (r < 110 && g > 150 && b > 160 && b - r > 80 && abs(g - b) < 60) count++
+                // الوسم الجديد «طلب مطعم» أخضر
+                if (g > 110 && g - r > 35 && g - b > 35) green++
                 x += 2
             }
             y += 2
         }
-        return count * 4 >= (0.0004f * w * h).toInt()
+        return green >= 120 || count * 4 >= (0.0004f * w * h).toInt()
     }
 
     // ───────────────────────── شاشة الكابتشا ─────────────────────────
@@ -519,7 +523,7 @@ class AiScreenEngine(private val context: Context) {
             val w = bitmap.width
             val h = bitmap.height
             val rowTop = keypad.rows[0][0]
-            val top = max(0, rowTop - (h * 0.065f).toInt())
+            val top = max(0, rowTop - (h * 0.052f).toInt())
             val bottom = rowTop - (h * 0.005f).toInt()
             val left = (w * 0.38f).toInt()
             val cw = (w * 0.24f).toInt()
