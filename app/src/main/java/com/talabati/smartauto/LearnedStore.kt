@@ -37,7 +37,7 @@ object LearnedStore {
     const val SIG_H = 16
     const val SIG_SIZE = SIG_W * SIG_H
 
-    private const val MATCH_THRESHOLD = 0.80f
+    private const val MATCH_THRESHOLD = 0.93f
     private const val MAX_ZONES = 100
     private const val MAX_RESTAURANTS = 300
 
