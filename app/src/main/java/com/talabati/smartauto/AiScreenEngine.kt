@@ -117,6 +117,16 @@ class AiScreenEngine(private val context: Context) {
         val zone = zoneMatch.item
         if (zone == null || !zone.flagged) {
             markOffer(false)
+            // نحفظ المطعم حتى لو المنطقة غير مستهدفة (ليظهر بالقائمة وتفعّله)
+            if (cfg.autoLearn) {
+                val nr = findRestaurantName(bitmap, pill.top)
+                if (nr != null) {
+                    val sig = gridSignature(bitmap, nr) { p -> isNameRed(p) }
+                    LearnedStore.matchOrLearn(LearnedKind.RESTAURANT, sig, true) {
+                        thumbOf(bitmap, nr, 8)
+                    }
+                }
+            }
             val note = if (zoneMatch.isNew) {
                 "رُصدت منطقة جديدة — صنّفها من التطبيق"
             } else {

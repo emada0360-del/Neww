@@ -38,8 +38,8 @@ object LearnedStore {
     const val SIG_SIZE = SIG_W * SIG_H
 
     private const val MATCH_THRESHOLD = 0.80f
-    private const val MAX_ZONES = 60
-    private const val MAX_RESTAURANTS = 80
+    private const val MAX_ZONES = 100
+    private const val MAX_RESTAURANTS = 300
 
     private var file: File? = null
     private val lock = Any()
