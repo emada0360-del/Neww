@@ -121,13 +121,18 @@ class AiScreenEngine(private val context: Context) {
             val skip = lastOfferTargeted == false &&
                 System.currentTimeMillis() - lastOfferAt < 120_000L
             return if (skip) {
-                // يدوي: رقم غلط (غير الرقم الصحيح) حتى ما يُقبل الطلب
-                val correct = res.digit?.firstOrNull()
-                val wrong = ('1'..'9').filter { it != correct }.random()
+                // يدوي: زر «إلغاء» تحت لوحة الأرقام (بدل رقم غلط)
+                val bottom = keypad.rows.last()[1]
+                val hh = bitmap.height
+                val ww = bitmap.width
+                val cancel = Rect(
+                    (ww * 0.36f).toInt(), bottom + (hh * 0.014f).toInt(),
+                    (ww * 0.64f).toInt(), bottom + (hh * 0.052f).toInt()
+                )
                 ScanResult(
                     ScreenKind.CAPTCHA,
                     "كابتشا: الطلب من منطقة/مطعم غير مستهدف — تم التجاهل",
-                    manualRect = keypad.rectFor(wrong)
+                    manualRect = cancel
                 )
             } else {
                 res
