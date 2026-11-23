@@ -27,7 +27,9 @@ data class ScanResult(
     val note: String = "",
     /** حدود الزر المطلوب الضغط داخله (موافق أو زر الرقم). null = لا ضغط */
     val tapRect: Rect? = null,
-    val digit: String? = null
+    val digit: String? = null,
+    /** للنقر اليدوي: مستطيل يُضغط عند لمسة المستخدم حتى لو غير مستهدف (موافق، أو رقم غلط) */
+    val manualRect: Rect? = null
 )
 
 data class AutomationConfig(
@@ -38,7 +40,9 @@ data class AutomationConfig(
     /** الفاصل بين ضغطتي «موافق» بالمللي ثانية. 0 = ضغطة واحدة فقط */
     val tapGapMs: Long = 18L,
     /** رصد المناطق والمطاعم الجديدة تلقائياً وحفظها لتصنيفها */
-    val autoLearn: Boolean = true
+    val autoLearn: Boolean = true,
+    /** نقر يدوي أوتوماتيكي: لمسة المستخدم بأي مكان تنفّذ الضغطة المناسبة */
+    val manualMode: Boolean = false
 )
 
 object AutomationStore {
@@ -47,6 +51,7 @@ object AutomationStore {
     private const val KEY_MODE = "mode"
     private const val KEY_GAP = "gap"
     private const val KEY_LEARN = "learn"
+    private const val KEY_MANUAL = "manual"
 
     private var prefs: SharedPreferences? = null
     private val _config = MutableStateFlow(AutomationConfig())
@@ -61,7 +66,7 @@ object AutomationStore {
         val gap = p.getLong(KEY_GAP, -1L)
         val learn = p.getBoolean(KEY_LEARN, true)
         _config.update { cur ->
-            var c = cur.copy(autoLearn = learn)
+            var c = cur.copy(autoLearn = learn, manualMode = p.getBoolean(KEY_MANUAL, false))
             if (mode != null) {
                 val m = runCatching { OrderFilterMode.valueOf(mode) }.getOrNull()
                 if (m != null) c = c.copy(orderFilterMode = m)
@@ -78,6 +83,7 @@ object AutomationStore {
             .putString(KEY_MODE, c.orderFilterMode.name)
             .putLong(KEY_GAP, c.tapGapMs)
             .putBoolean(KEY_LEARN, c.autoLearn)
+            .putBoolean(KEY_MANUAL, c.manualMode)
             .apply()
     }
 
@@ -98,6 +104,11 @@ object AutomationStore {
 
     fun setTapGapMs(ms: Long) {
         _config.update { it.copy(tapGapMs = ms.coerceIn(0L, 100L)) }
+        save()
+    }
+
+    fun setManualMode(enabled: Boolean) {
+        _config.update { it.copy(manualMode = enabled) }
         save()
     }
 

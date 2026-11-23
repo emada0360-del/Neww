@@ -124,6 +124,17 @@ object AdbTapExecutor {
         shellProcess = null
     }
 
+    /** يشغّل أمر shell منفصل عبر Shizuku (يُستعمل لقراءة لمسات الشاشة) */
+    fun spawn(cmd: Array<String>): Process? {
+        return try {
+            ensureListener()
+            if (!isShizukuAlive() || !hasPermission()) return null
+            newProcessMethod?.invoke(null, cmd, null, null) as? Process
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     /** تهيئة مسبقة حتى لا تتأخر أول نقرة */
     fun warmUp() {
         try {

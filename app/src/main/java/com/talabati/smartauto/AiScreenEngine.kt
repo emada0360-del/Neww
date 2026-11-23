@@ -76,6 +76,32 @@ class AiScreenEngine(private val context: Context) {
 
     // ───────────────────────── التحليل الرئيسي ─────────────────────────
 
+    /** يتأكد إن المستطيل ثابت لعدة لقطات (حتى لا نحفظ لقطات حركة دخول البطاقة) */
+    private class RectStability {
+        private var prev: Rect? = null
+        private var count = 0
+        private var lastAt = 0L
+
+        fun update(r: Rect): Int {
+            val now = System.currentTimeMillis()
+            val p = prev
+            if (p != null && now - lastAt < 600 &&
+                abs(p.left - r.left) <= 3 && abs(p.right - r.right) <= 3 &&
+                abs(p.top - r.top) <= 3 && abs(p.bottom - r.bottom) <= 3
+            ) {
+                count++
+            } else {
+                count = 0
+            }
+            prev = Rect(r)
+            lastAt = now
+            return count
+        }
+    }
+
+    private val pillStability = RectStability()
+    private val nameStability = RectStability()
+
     // نتيجة آخر طلب شفناه: هل منطقته مستهدفة؟ (نستعملها لتجاهل كابتشا طلب ضغطته بالغلط)
     private var lastOfferTargeted: Boolean? = null
     private var lastOfferAt = 0L
@@ -95,7 +121,14 @@ class AiScreenEngine(private val context: Context) {
             val skip = lastOfferTargeted == false &&
                 System.currentTimeMillis() - lastOfferAt < 120_000L
             return if (skip) {
-                ScanResult(ScreenKind.CAPTCHA, "كابتشا: الطلب من منطقة/مطعم غير مستهدف — تم التجاهل")
+                // يدوي: رقم غلط (غير الرقم الصحيح) حتى ما يُقبل الطلب
+                val correct = res.digit?.firstOrNull()
+                val wrong = ('1'..'9').filter { it != correct }.random()
+                ScanResult(
+                    ScreenKind.CAPTCHA,
+                    "كابتشا: الطلب من منطقة/مطعم غير مستهدف — تم التجاهل",
+                    manualRect = keypad.rectFor(wrong)
+                )
             } else {
                 res
             }
@@ -106,21 +139,34 @@ class AiScreenEngine(private val context: Context) {
 
     // ───────────────────────── شاشة الطلب ─────────────────────────
 
+    /** اسم المطعم كامل وثابت؟ (محاذٍ لليمين، عريض كفاية، ومستقر لقطتين) */
+    private fun nameSettled(r: Rect, w: Int): Boolean {
+        val stable = nameStability.update(r) >= 2
+        val shapeOk = r.width() >= w * 0.30f && r.right >= w * 0.76f
+        return stable && shapeOk
+    }
+
     private fun analyzeOffer(bitmap: Bitmap, greenRect: Rect, cfg: AutomationConfig): ScanResult {
         val pill = findZonePill(bitmap)
             ?: return ScanResult(ScreenKind.OFFER, "طلب ظاهر: لم أجد شريحة المنطقة")
 
+        val pillStable = pillStability.update(pill) >= 2
         val zoneSig = gridSignature(bitmap, pill) { p -> isWhiteText(p) }
-        val zoneMatch = LearnedStore.matchOrLearn(LearnedKind.ZONE, zoneSig, cfg.autoLearn) {
+        val zoneMatch = LearnedStore.matchOrLearn(LearnedKind.ZONE, zoneSig, cfg.autoLearn && pillStable) {
             thumbOf(bitmap, pill, 6)
         }
         val zone = zoneMatch.item
-        if (zone == null || !zone.flagged) {
+        if (zone == null && !pillStable && cfg.autoLearn) {
+            return ScanResult(ScreenKind.OFFER, "انتظار استقرار الطلب...")
+        }
+        val isRestaurantOrder = detectRestaurantTag(bitmap)
+        val isFarOrder = false // TODO: وسم الطلب البعيد (يحتاج تحديد شكله)
+        if (zone == null || !LearnedStore.zoneAllows(zone, isRestaurantOrder, isFarOrder)) {
             markOffer(false)
             // نحفظ المطعم حتى لو المنطقة غير مستهدفة (ليظهر بالقائمة وتفعّله)
             if (cfg.autoLearn) {
                 val nr = findRestaurantName(bitmap, pill.top)
-                if (nr != null) {
+                if (nr != null && nameSettled(nr, bitmap.width)) {
                     val sig = gridSignature(bitmap, nr) { p -> isNameRed(p) }
                     LearnedStore.matchOrLearn(LearnedKind.RESTAURANT, sig, true) {
                         thumbOf(bitmap, nr, 8)
@@ -132,17 +178,22 @@ class AiScreenEngine(private val context: Context) {
             } else {
                 "منطقة غير مستهدفة"
             }
-            return ScanResult(ScreenKind.OFFER, note)
+            return ScanResult(ScreenKind.OFFER, note, manualRect = greenRect)
         }
 
         // مطعم مفعّل؟ (ويُحفظ المطعم الجديد ليظهر في قائمة المطاعم)
         val nameRect = findRestaurantName(bitmap, pill.top)
         if (nameRect != null) {
+            val settled = nameSettled(nameRect, bitmap.width)
             val nameSig = gridSignature(bitmap, nameRect) { p -> isNameRed(p) }
-            val rm = LearnedStore.matchOrLearn(LearnedKind.RESTAURANT, nameSig, cfg.autoLearn) {
+            val rm = LearnedStore.matchOrLearn(LearnedKind.RESTAURANT, nameSig, cfg.autoLearn && settled) {
                 thumbOf(bitmap, nameRect, 8)
             }
             val rest = rm.item
+            // بطاقة لسه تتحرك/غير مكتملة: ننتظر لقطة مستقرة
+            if (rest == null && !settled) {
+                return ScanResult(ScreenKind.OFFER, "انتظار استقرار الطلب...")
+            }
             // المطعم لازم يكون «مفعّل» من التطبيق، والجديد يُتجاهل لين تفعّله
             if (rest == null || !rest.flagged) {
                 markOffer(false)
@@ -151,20 +202,7 @@ class AiScreenEngine(private val context: Context) {
                 } else {
                     "مطعم غير مفعّل — تم التجاهل"
                 }
-                return ScanResult(ScreenKind.OFFER, note)
-            }
-        }
-
-        // نوع الطلب
-        if (cfg.orderFilterMode != OrderFilterMode.ALL) {
-            val isRestaurant = detectRestaurantTag(bitmap)
-            if (cfg.orderFilterMode == OrderFilterMode.NORMAL_ONLY && isRestaurant) {
-                markOffer(false)
-                return ScanResult(ScreenKind.OFFER, "طلب مطعم — تم التجاهل (الفلتر: عادي)")
-            }
-            if (cfg.orderFilterMode == OrderFilterMode.RESTAURANT_ONLY && !isRestaurant) {
-                markOffer(false)
-                return ScanResult(ScreenKind.OFFER, "طلب عادي — تم التجاهل (الفلتر: مطعم)")
+                return ScanResult(ScreenKind.OFFER, note, manualRect = greenRect)
             }
         }
 

@@ -262,12 +262,7 @@ private fun SmartAutoScreen(
 
                 // ───── المناطق ─────
                 SectionCard(title = "المناطق المرصودة") {
-                    LearnedItemsSection(
-                        kind = LearnedKind.ZONE,
-                        flagLabel = "مستهدفة",
-                        helper = "شغّل المراقبة وانتظر ظهور طلبات: تظهر هنا صورة منطقة كل طلب. فعّل «مستهدفة» للمناطق اللي تريدها.",
-                        emptyHint = "لم تُرصد مناطق بعد"
-                    )
+                    ZoneGroupsSection()
                 }
 
                 // ───── المطاعم ─────
@@ -304,27 +299,21 @@ private fun SmartAutoScreen(
                     }
                 }
 
-                // ───── نوع الطلبات ─────
-                SectionCard(title = "نوع الطلبات") {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = cfg.orderFilterMode == OrderFilterMode.ALL,
-                            onClick = { AutomationStore.setOrderFilterMode(OrderFilterMode.ALL) },
-                            label = { Text("الكل") }
-                        )
-                        FilterChip(
-                            selected = cfg.orderFilterMode == OrderFilterMode.NORMAL_ONLY,
-                            onClick = { AutomationStore.setOrderFilterMode(OrderFilterMode.NORMAL_ONLY) },
-                            label = { Text("عادي فقط") }
-                        )
-                        FilterChip(
-                            selected = cfg.orderFilterMode == OrderFilterMode.RESTAURANT_ONLY,
-                            onClick = { AutomationStore.setOrderFilterMode(OrderFilterMode.RESTAURANT_ONLY) },
-                            label = { Text("مطعم فقط") }
+                // ───── نقر يدوي أوتوماتيكي ─────
+                SectionCard(title = "نقر يدوي أوتوماتيكي") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(text = "تفعيل")
+                        Switch(
+                            checked = cfg.manualMode,
+                            onCheckedChange = { AutomationStore.setManualMode(it) }
                         )
                     }
                     Text(
-                        text = "«مطعم فقط» = الطلبات اللي عليها وسم «طلب مطعم». «عادي فقط» = الطلبات بدون هذا الوسم.",
+                        text = "عند التفعيل يتوقف النقر التلقائي. انقر بإصبعك أي مكان بالشاشة: النقرة الأولى تضغط «موافق» والثانية تضغط الرقم الصحيح. إذا الطلب من منطقة/مطعم غير مستهدف يضغط موافق ثم رقم غلط.",
                         style = MaterialTheme.typography.bodySmall,
                         color = GrayOff
                     )
