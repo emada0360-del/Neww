@@ -26,7 +26,11 @@ data class LearnedItem(
     val signature: FloatArray,
     val thumbPng: ByteArray,
     val label: String,
-    val flagged: Boolean
+    val flagged: Boolean,
+    /** للمنطقة فقط: مفعّلة لطلبات المطعم */
+    val restFlag: Boolean = false,
+    /** للمنطقة فقط: مفعّلة للطلبات البعيدة */
+    val farFlag: Boolean = false
 )
 
 class MatchResult(val item: LearnedItem?, val isNew: Boolean)
@@ -87,7 +91,7 @@ object LearnedStore {
             val limit = if (kind == LearnedKind.ZONE) MAX_ZONES else MAX_RESTAURANTS
             val ofKind = list.filter { it.kind == kind }
             if (ofKind.size >= limit) {
-                val victim = ofKind.firstOrNull { !it.flagged } ?: return MatchResult(null, false)
+                val victim = ofKind.firstOrNull { !it.flagged && !it.restFlag && !it.farFlag } ?: return MatchResult(null, false)
                 list.remove(victim)
             }
             val bmp = try {
@@ -122,6 +126,8 @@ object LearnedStore {
             o.put("thumb", Base64.encodeToString(item.thumbPng, Base64.NO_WRAP))
             o.put("label", item.label)
             o.put("flag", item.flagged)
+            o.put("flagR", item.restFlag)
+            o.put("flagF", item.farFlag)
             arr.put(o)
         }
         return arr.toString()
@@ -158,6 +164,38 @@ object LearnedStore {
         }
     }
 
+    /** group: 0 = عادي، 1 = مطعم، 2 = بعيد */
+    fun setZoneGroupFlag(id: String, group: Int, on: Boolean) {
+        synchronized(lock) {
+            _items.value = _items.value.map {
+                if (it.id != id) it else when (group) {
+                    0 -> it.copy(flagged = on)
+                    1 -> it.copy(restFlag = on)
+                    else -> it.copy(farFlag = on)
+                }
+            }
+            persistLocked()
+        }
+    }
+
+    /** تشغيل/إطفاء كل المناطق داخل خانة */
+    fun setAllZonesGroup(group: Int, on: Boolean) {
+        synchronized(lock) {
+            _items.value = _items.value.map {
+                if (it.kind != LearnedKind.ZONE) it else when (group) {
+                    0 -> it.copy(flagged = on)
+                    1 -> it.copy(restFlag = on)
+                    else -> it.copy(farFlag = on)
+                }
+            }
+            persistLocked()
+        }
+    }
+
+    /** هل المنطقة مسموحة لهذا النوع من الطلبات */
+    fun zoneAllows(item: LearnedItem, restaurant: Boolean): Boolean =
+        item.farFlag || (if (restaurant) item.restFlag else item.flagged)
+
     fun delete(id: String) {
         synchronized(lock) {
             _items.value = _items.value.filter { it.id != id }
@@ -167,7 +205,7 @@ object LearnedStore {
 
     fun clearUnflagged(kind: LearnedKind) {
         synchronized(lock) {
-            _items.value = _items.value.filter { !(it.kind == kind && !it.flagged) }
+            _items.value = _items.value.filter { !(it.kind == kind && !it.flagged && !it.restFlag && !it.farFlag) }
             persistLocked()
         }
     }
@@ -229,7 +267,9 @@ object LearnedStore {
                     signature = sig,
                     thumbPng = Base64.decode(o.optString("thumb", ""), Base64.NO_WRAP),
                     label = o.optString("label", ""),
-                    flagged = o.optBoolean("flag", false)
+                    flagged = o.optBoolean("flag", false),
+                    restFlag = o.optBoolean("flagR", false),
+                    farFlag = o.optBoolean("flagF", false)
                 )
             )
         }
@@ -248,6 +288,8 @@ object LearnedStore {
                 o.put("thumb", Base64.encodeToString(item.thumbPng, Base64.NO_WRAP))
                 o.put("label", item.label)
                 o.put("flag", item.flagged)
+            o.put("flagR", item.restFlag)
+            o.put("flagF", item.farFlag)
                 arr.put(o)
             }
             val text = arr.toString()
