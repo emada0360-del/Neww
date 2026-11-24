@@ -117,26 +117,26 @@ class AiScreenEngine(private val context: Context) {
 
         val keypad = detectKeypad(bitmap)
         if (keypad != null) {
-            val res = analyzeCaptcha(bitmap, keypad, cfg)
             val skip = lastOfferTargeted == false &&
                 System.currentTimeMillis() - lastOfferAt < 120_000L
-            return if (skip) {
-                // يدوي: زر «إلغاء» تحت لوحة الأرقام (بدل رقم غلط)
-                val bottom = keypad.rows.last()[1]
+            if (skip) {
+                // غير مستهدف: ما نقرأ الرقم أبداً، بس نجهّز زر «إلغاء» للنقر اليدوي
+                val rows = keypad.rows
+                val pitch = if (rows.size >= 2) rows[1][0] - rows[0][0] else 0
+                val bottom = if (rows.size >= 4) rows[3][1] else rows[0][1] + 3 * pitch
                 val hh = bitmap.height
                 val ww = bitmap.width
                 val cancel = Rect(
                     (ww * 0.36f).toInt(), bottom + (hh * 0.014f).toInt(),
                     (ww * 0.64f).toInt(), bottom + (hh * 0.052f).toInt()
                 )
-                ScanResult(
+                return ScanResult(
                     ScreenKind.CAPTCHA,
                     "كابتشا: الطلب من منطقة/مطعم غير مستهدف — تم التجاهل",
                     manualRect = cancel
                 )
-            } else {
-                res
             }
+            return analyzeCaptcha(bitmap, keypad, cfg)
         }
 
         return ScanResult()

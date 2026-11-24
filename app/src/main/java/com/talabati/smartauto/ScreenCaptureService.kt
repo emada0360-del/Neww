@@ -195,7 +195,8 @@ class ScreenCaptureService : Service() {
                                         AutomationStore.updateLog("نقر يدوي: " + result.note)
                                         if (result.kind == ScreenKind.OFFER) {
                                             AdbTapExecutor.executeAccept(mr, cfg.tapGapMs)
-                                            repeatActive = true
+                                            // التكرار فقط للمستهدف (غير المستهدف: ضغطة واحدة ثم تجاهل)
+                                            repeatActive = result.tapRect != null
                                             repeatLastAt = System.currentTimeMillis()
                                             repeatSeenAt = repeatLastAt
                                             repeatStartAt = repeatLastAt
@@ -212,7 +213,7 @@ class ScreenCaptureService : Service() {
                                     repeatActive = false
                                 } else if (result.kind == ScreenKind.OFFER) {
                                     repeatSeenAt = t
-                                    val mr = result.tapRect ?: result.manualRect
+                                    val mr = result.tapRect
                                     if (mr != null && t - repeatLastAt >= 2000L) {
                                         repeatLastAt = t
                                         AutomationStore.updateLog("تكرار موافق (بانتظار الرقم)")
