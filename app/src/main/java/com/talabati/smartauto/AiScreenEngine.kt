@@ -165,8 +165,7 @@ class AiScreenEngine(private val context: Context) {
             return ScanResult(ScreenKind.OFFER, "انتظار استقرار الطلب...")
         }
         val isRestaurantOrder = detectRestaurantTag(bitmap)
-        val isFarOrder = false // TODO: وسم الطلب البعيد (يحتاج تحديد شكله)
-        if (zone == null || !LearnedStore.zoneAllows(zone, isRestaurantOrder, isFarOrder)) {
+        if (zone == null || !LearnedStore.zoneAllows(zone, isRestaurantOrder)) {
             markOffer(false)
             // نحفظ المطعم حتى لو المنطقة غير مستهدفة (ليظهر بالقائمة وتفعّله)
             if (cfg.autoLearn) {
