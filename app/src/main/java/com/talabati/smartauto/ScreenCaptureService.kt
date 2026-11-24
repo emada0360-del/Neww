@@ -170,6 +170,10 @@ class ScreenCaptureService : Service() {
                 var repeatLastAt = 0L
                 var repeatSeenAt = 0L
                 var repeatStartAt = 0L
+                // نوع الشاشة وقت اللمسة: لمسة بشاشة الكابتشا ما تنفّذ شي على شاشة الطلب
+                var prevKind = ScreenKind.NONE
+                var seenPend = 0L
+                var touchKind = ScreenKind.NONE
                 while (isActive && AutomationStore.config.value.isRunning) {
                     val bitmap = acquireLatestBitmap(reader)
                     if (bitmap == null) {
@@ -185,8 +189,14 @@ class ScreenCaptureService : Service() {
                         if (cfg.manualMode) {
                             TouchWatcher.ensureRunning()
                             val pend = TouchWatcher.pendingAt()
+                            if (pend != 0L && pend != seenPend) {
+                                seenPend = pend
+                                touchKind = prevKind
+                            }
                             if (pend != 0L) {
-                                if (now - pend > 1200L) {
+                                val mismatch = result.kind != ScreenKind.NONE &&
+                                    touchKind != ScreenKind.NONE && result.kind != touchKind
+                                if (now - pend > 1200L || mismatch) {
                                     TouchWatcher.consume()
                                 } else {
                                     val mr = result.tapRect ?: result.manualRect
@@ -256,6 +266,7 @@ class ScreenCaptureService : Service() {
                             ScreenKind.NONE -> Unit
                         }
                         }
+                        prevKind = result.kind
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
