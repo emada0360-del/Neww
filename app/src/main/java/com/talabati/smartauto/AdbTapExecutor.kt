@@ -176,6 +176,20 @@ object AdbTapExecutor {
         return "input tap $x $y >/dev/null 2>&1 &"
     }
 
+    /** إخفاء/إظهار أيقونة تسجيل الشاشة من شريط الحالة (قد لا ينفع على بعض الأجهزة) */
+    fun setRecordIconHidden(hidden: Boolean): Boolean {
+        val cmd = if (hidden) {
+            "c=\$(settings get secure icon_blacklist); " +
+                "case \"\$c\" in *screen_record*) ;; null|\"\") settings put secure icon_blacklist screen_record;; " +
+                "*) settings put secure icon_blacklist \"\$c,screen_record\";; esac"
+        } else {
+            "c=\$(settings get secure icon_blacklist | sed 's/,\\?screen_record//;s/^screen_record,\\?//;s/^screen_record\$//'); " +
+                "if [ -z \"\$c\" ] || [ \"\$c\" = null ]; then settings delete secure icon_blacklist; " +
+                "else settings put secure icon_blacklist \"\$c\"; fi"
+        }
+        return sendCommand(cmd)
+    }
+
     // ───────────────────────── النقر ─────────────────────────
 
     /** ضغطة (أو ضغطتان) على زر «موافق»، كل واحدة بإحداثيات عشوائية جديدة داخل حدود الزر */
