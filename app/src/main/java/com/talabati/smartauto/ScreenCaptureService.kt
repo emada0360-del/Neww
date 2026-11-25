@@ -171,7 +171,8 @@ class ScreenCaptureService : Service() {
             AdbTapExecutor.warmUp()
 
             scanJob = serviceScope.launch {
-                var nextActionAt = 0L
+                var nextAcceptAt = 0L
+                var nextDigitAt = 0L
                 var lastLicenseCheckAt = 0L
                 while (isActive && AutomationStore.config.value.isRunning) {
                     val bitmap = acquireLatestBitmap(reader)
@@ -199,10 +200,10 @@ class ScreenCaptureService : Service() {
                         when (result.kind) {
                             ScreenKind.OFFER -> {
                                 if (rect != null) {
-                                    if (now >= nextActionAt) {
+                                    if (now >= nextAcceptAt) {
                                         AutomationStore.updateLog(result.note)
                                         AdbTapExecutor.executeAccept(rect, cfg.tapGapMs)
-                                        nextActionAt = System.currentTimeMillis() +
+                                        nextAcceptAt = System.currentTimeMillis() +
                                             ACCEPT_COOLDOWN_MS + Random.nextLong(0L, 60L)
                                     }
                                 } else {
@@ -212,10 +213,10 @@ class ScreenCaptureService : Service() {
 
                             ScreenKind.CAPTCHA -> {
                                 if (rect != null) {
-                                    if (now >= nextActionAt) {
+                                    if (now >= nextDigitAt) {
                                         AutomationStore.updateLog(result.note)
                                         AdbTapExecutor.executeDigit(rect)
-                                        nextActionAt = System.currentTimeMillis() +
+                                        nextDigitAt = System.currentTimeMillis() +
                                             DIGIT_COOLDOWN_MS + Random.nextLong(0L, 60L)
                                     }
                                 } else {
