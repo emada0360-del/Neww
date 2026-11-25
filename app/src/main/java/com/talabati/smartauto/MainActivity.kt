@@ -91,12 +91,14 @@ class MainActivity : ComponentActivity() {
         setContent {
             val cfg by AutomationStore.config.collectAsState()
             AppTheme {
-                SmartAutoScreen(
-                    cfg = cfg,
-                    onRequestShizuku = { AdbTapExecutor.requestPermission() },
-                    onStart = { requestScreenCapture() },
-                    onStop = { stopScreenCapture() }
-                )
+                LicenseGate {
+                    SmartAutoScreen(
+                        cfg = cfg,
+                        onRequestShizuku = { AdbTapExecutor.requestPermission() },
+                        onStart = { requestScreenCapture() },
+                        onStop = { stopScreenCapture() }
+                    )
+                }
             }
         }
     }
@@ -262,7 +264,12 @@ private fun SmartAutoScreen(
 
                 // ───── المناطق ─────
                 SectionCard(title = "المناطق المرصودة") {
-                    ZoneGroupsSection()
+                    LearnedItemsSection(
+                        kind = LearnedKind.ZONE,
+                        flagLabel = "مستهدفة",
+                        helper = "شغّل المراقبة وانتظر ظهور طلبات: تظهر هنا صورة منطقة كل طلب. فعّل «مستهدفة» للمناطق اللي تريدها.",
+                        emptyHint = "لم تُرصد مناطق بعد"
+                    )
                 }
 
                 // ───── المطاعم ─────
@@ -299,21 +306,44 @@ private fun SmartAutoScreen(
                     }
                 }
 
-                // ───── نقر يدوي أوتوماتيكي ─────
-                SectionCard(title = "نقر يدوي أوتوماتيكي") {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(text = "تفعيل")
-                        Switch(
-                            checked = cfg.manualMode,
-                            onCheckedChange = { AutomationStore.setManualMode(it) }
+                // ───── نوع الطلبات ─────
+                SectionCard(title = "نوع الطلبات") {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = cfg.orderFilterMode == OrderFilterMode.ALL,
+                            onClick = { AutomationStore.setOrderFilterMode(OrderFilterMode.ALL) },
+                            label = { Text("الكل") }
+                        )
+                        FilterChip(
+                            selected = cfg.orderFilterMode == OrderFilterMode.NORMAL_ONLY,
+                            onClick = { AutomationStore.setOrderFilterMode(OrderFilterMode.NORMAL_ONLY) },
+                            label = { Text("عادي فقط") }
+                        )
+                        FilterChip(
+                            selected = cfg.orderFilterMode == OrderFilterMode.RESTAURANT_ONLY,
+                            onClick = { AutomationStore.setOrderFilterMode(OrderFilterMode.RESTAURANT_ONLY) },
+                            label = { Text("مطعم فقط") }
                         )
                     }
                     Text(
-                        text = "عند التفعيل يتوقف النقر التلقائي. انقر بإصبعك أي مكان بالشاشة: النقرة الأولى تضغط «موافق» والثانية تضغط الرقم الصحيح. إذا الطلب من منطقة/مطعم غير مستهدف يضغط موافق ثم رقم غلط.",
+                        text = "«مطعم فقط» = الطلبات اللي عليها وسم «طلب مطعم». «عادي فقط» = الطلبات بدون هذا الوسم.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = GrayOff
+                    )
+                }
+
+                // ───── أيقونة التسجيل ─────
+                SectionCard(title = "أيقونة التسجيل الحمرا") {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            Thread { AdbTapExecutor.setRecordIconHidden(true) }.start()
+                        }) { Text("إخفاء") }
+                        OutlinedButton(onClick = {
+                            Thread { AdbTapExecutor.setRecordIconHidden(false) }.start()
+                        }) { Text("إظهار") }
+                    }
+                    Text(
+                        text = "يحتاج Shizuku شغّال. قد ما ينفع على أندرويد 15 إذا النقطة مؤشر نظام ثابت. أعد تشغيل المراقبة بعد الضغط.",
                         style = MaterialTheme.typography.bodySmall,
                         color = GrayOff
                     )

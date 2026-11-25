@@ -122,6 +122,13 @@ class ScreenCaptureService : Service() {
 
     private fun startCapture(resultCode: Int, resultData: Intent) {
         try {
+            val cached = LicenseManager.loadCached(applicationContext)
+            if (cached?.isValidNow() != true) {
+                AutomationStore.setRunning(false, "التطبيق غير مفعّل")
+                AutomationStore.updateLog("التطبيق غير مفعّل — فعّله من الشاشة الرئيسية أولاً")
+                stopSelf()
+                return
+            }
             stopCapture()
 
             val projectionManager =
@@ -165,15 +172,7 @@ class ScreenCaptureService : Service() {
 
             scanJob = serviceScope.launch {
                 var nextActionAt = 0L
-                // تكرار «موافق» بالنقر اليدوي لين يظهر الرقم
-                var repeatActive = false
-                var repeatLastAt = 0L
-                var repeatSeenAt = 0L
-                var repeatStartAt = 0L
-                // نوع الشاشة وقت اللمسة: لمسة بشاشة الكابتشا ما تنفّذ شي على شاشة الطلب
-                var prevKind = ScreenKind.NONE
-                var seenPend = 0L
-                var touchKind = ScreenKind.NONE
+                var lastLicenseCheckAt = 0L
                 while (isActive && AutomationStore.config.value.isRunning) {
                     val bitmap = acquireLatestBitmap(reader)
                     if (bitmap == null) {
@@ -181,61 +180,22 @@ class ScreenCaptureService : Service() {
                         continue
                     }
                     try {
+                        val nowLic = System.currentTimeMillis()
+                        if (nowLic - lastLicenseCheckAt > 15_000L) {
+                            lastLicenseCheckAt = nowLic
+                            if (LicenseManager.loadCached(applicationContext)?.isValidNow() != true) {
+                                AutomationStore.updateLog("تم إيقاف المراقبة: التفعيل غير صالح")
+                                stopCapture()
+                                stopSelf()
+                                break
+                            }
+                            launch(Dispatchers.IO) { LicenseManager.refresh(applicationContext) }
+                        }
                         val cfg = AutomationStore.config.value
                         val result = aiEngine.analyzeFrame(bitmap, cfg)
                         val now = System.currentTimeMillis()
                         val rect = result.tapRect
 
-                        if (cfg.manualMode) {
-                            TouchWatcher.ensureRunning()
-                            val pend = TouchWatcher.pendingAt()
-                            if (pend != 0L && pend != seenPend) {
-                                seenPend = pend
-                                touchKind = prevKind
-                            }
-                            if (pend != 0L) {
-                                val mismatch = result.kind != ScreenKind.NONE &&
-                                    touchKind != ScreenKind.NONE && result.kind != touchKind
-                                if (now - pend > 1200L || mismatch) {
-                                    TouchWatcher.consume()
-                                } else {
-                                    val mr = result.tapRect ?: result.manualRect
-                                    if (mr != null && result.kind != ScreenKind.NONE) {
-                                        TouchWatcher.consume()
-                                        AutomationStore.updateLog("نقر يدوي: " + result.note)
-                                        if (result.kind == ScreenKind.OFFER) {
-                                            AdbTapExecutor.executeAccept(mr, cfg.tapGapMs)
-                                            // التكرار فقط للمستهدف (غير المستهدف: ضغطة واحدة ثم تجاهل)
-                                            repeatActive = result.tapRect != null
-                                            repeatLastAt = System.currentTimeMillis()
-                                            repeatSeenAt = repeatLastAt
-                                            repeatStartAt = repeatLastAt
-                                        } else {
-                                            repeatActive = false
-                                            AdbTapExecutor.executeDigit(mr)
-                                        }
-                                    }
-                                }
-                            }
-                            if (repeatActive) {
-                                val t = System.currentTimeMillis()
-                                if (result.kind == ScreenKind.CAPTCHA || t - repeatStartAt > 60_000L) {
-                                    repeatActive = false
-                                } else if (result.kind == ScreenKind.OFFER) {
-                                    repeatSeenAt = t
-                                    val mr = result.tapRect
-                                    if (mr != null && t - repeatLastAt >= 2000L) {
-                                        repeatLastAt = t
-                                        AutomationStore.updateLog("تكرار موافق (بانتظار الرقم)")
-                                        AdbTapExecutor.executeAccept(mr, cfg.tapGapMs)
-                                    }
-                                } else if (t - repeatSeenAt > 1500L) {
-                                    repeatActive = false
-                                }
-                            }
-                        } else {
-                            repeatActive = false
-                            TouchWatcher.stop()
                         when (result.kind) {
                             ScreenKind.OFFER -> {
                                 if (rect != null) {
@@ -265,8 +225,6 @@ class ScreenCaptureService : Service() {
 
                             ScreenKind.NONE -> Unit
                         }
-                        }
-                        prevKind = result.kind
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -317,7 +275,6 @@ class ScreenCaptureService : Service() {
     }
 
     private fun stopCapture() {
-        TouchWatcher.stop()
         scanJob?.cancel()
         scanJob = null
         virtualDisplay?.release()

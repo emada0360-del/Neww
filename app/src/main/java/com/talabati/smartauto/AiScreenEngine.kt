@@ -120,21 +120,7 @@ class AiScreenEngine(private val context: Context) {
             val skip = lastOfferTargeted == false &&
                 System.currentTimeMillis() - lastOfferAt < 120_000L
             if (skip) {
-                // غير مستهدف: ما نقرأ الرقم أبداً، بس نجهّز زر «إلغاء» للنقر اليدوي
-                val rows = keypad.rows
-                val pitch = if (rows.size >= 2) rows[1][0] - rows[0][0] else 0
-                val bottom = if (rows.size >= 4) rows[3][1] else rows[0][1] + 3 * pitch
-                val hh = bitmap.height
-                val ww = bitmap.width
-                val cancel = Rect(
-                    (ww * 0.36f).toInt(), bottom + (hh * 0.014f).toInt(),
-                    (ww * 0.64f).toInt(), bottom + (hh * 0.052f).toInt()
-                )
-                return ScanResult(
-                    ScreenKind.CAPTCHA,
-                    "كابتشا: الطلب من منطقة/مطعم غير مستهدف — تم التجاهل",
-                    manualRect = cancel
-                )
+                return ScanResult(ScreenKind.CAPTCHA, "كابتشا: الطلب من منطقة/مطعم غير مستهدف — تم التجاهل")
             }
             return analyzeCaptcha(bitmap, keypad, cfg)
         }
@@ -164,8 +150,7 @@ class AiScreenEngine(private val context: Context) {
         if (zone == null && !pillStable && cfg.autoLearn) {
             return ScanResult(ScreenKind.OFFER, "انتظار استقرار الطلب...")
         }
-        val isRestaurantOrder = detectRestaurantTag(bitmap)
-        if (zone == null || !LearnedStore.zoneAllows(zone, isRestaurantOrder)) {
+        if (zone == null || !zone.flagged) {
             markOffer(false)
             // نحفظ المطعم حتى لو المنطقة غير مستهدفة (ليظهر بالقائمة وتفعّله)
             if (cfg.autoLearn) {
@@ -182,7 +167,7 @@ class AiScreenEngine(private val context: Context) {
             } else {
                 "منطقة غير مستهدفة"
             }
-            return ScanResult(ScreenKind.OFFER, note, manualRect = greenRect)
+            return ScanResult(ScreenKind.OFFER, note)
         }
 
         // مطعم مفعّل؟ (ويُحفظ المطعم الجديد ليظهر في قائمة المطاعم)
@@ -206,7 +191,20 @@ class AiScreenEngine(private val context: Context) {
                 } else {
                     "مطعم غير مفعّل — تم التجاهل"
                 }
-                return ScanResult(ScreenKind.OFFER, note, manualRect = greenRect)
+                return ScanResult(ScreenKind.OFFER, note)
+            }
+        }
+
+        // نوع الطلب
+        if (cfg.orderFilterMode != OrderFilterMode.ALL) {
+            val isRestaurant = detectRestaurantTag(bitmap)
+            if (cfg.orderFilterMode == OrderFilterMode.NORMAL_ONLY && isRestaurant) {
+                markOffer(false)
+                return ScanResult(ScreenKind.OFFER, "طلب مطعم — تم التجاهل (الفلتر: عادي)")
+            }
+            if (cfg.orderFilterMode == OrderFilterMode.RESTAURANT_ONLY && !isRestaurant) {
+                markOffer(false)
+                return ScanResult(ScreenKind.OFFER, "طلب عادي — تم التجاهل (الفلتر: مطعم)")
             }
         }
 
